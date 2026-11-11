@@ -35,7 +35,7 @@ jobs:
     name: Build, package and publish (macOS)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # The full history and tags are needed to find the latest version.
           fetch-depth: 0
