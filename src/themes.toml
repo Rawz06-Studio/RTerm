@@ -1,0 +1,74 @@
+# RTerm's built-in themes.
+#
+# To add your own, copy a block into ~/.config/rterm/themes/<name>.toml
+# (without the [[theme]] line) and change the colors.
+
+[[theme]]
+name = "RTerm Dark"
+background = "#101216"
+foreground = "#d7dce5"
+cursor = "#6cb6ff"
+selection = "#2b3a55"
+muted = "#7d8696"
+normal = { black = "#1c1f26", red = "#f0717b", green = "#8fd694", yellow = "#f2c97d", blue = "#6cb6ff", magenta = "#c59bf5", cyan = "#5fd4d0", white = "#c3c9d4" }
+bright = { black = "#5b6372", red = "#ff8f97", green = "#a8e6ac", yellow = "#ffdb9a", blue = "#91c9ff", magenta = "#d8b8ff", cyan = "#84e6e2", white = "#f2f4f8" }
+
+[[theme]]
+name = "RTerm Light"
+background = "#fbfaf7"
+foreground = "#2a2f3a"
+cursor = "#2f6fde"
+selection = "#cfe0fb"
+muted = "#8a909c"
+normal = { black = "#2a2f3a", red = "#c8323f", green = "#2f8a45", yellow = "#a96b00", blue = "#2f6fde", magenta = "#8a46c9", cyan = "#127f86", white = "#b9bec8" }
+bright = { black = "#6b7280", red = "#e04a57", green = "#3ba457", yellow = "#c78412", blue = "#4d8bf5", magenta = "#a366e0", cyan = "#1f9aa2", white = "#eceae4" }
+
+[[theme]]
+name = "Dracula"
+background = "#282a36"
+foreground = "#f8f8f2"
+cursor = "#bd93f9"
+selection = "#44475a"
+muted = "#6272a4"
+normal = { black = "#21222c", red = "#ff5555", green = "#50fa7b", yellow = "#f1fa8c", blue = "#bd93f9", magenta = "#ff79c6", cyan = "#8be9fd", white = "#f8f8f2" }
+bright = { black = "#6272a4", red = "#ff6e6e", green = "#69ff94", yellow = "#ffffa5", blue = "#d6acff", magenta = "#ff92df", cyan = "#a4ffff", white = "#ffffff" }
+
+[[theme]]
+name = "Nord"
+background = "#2e3440"
+foreground = "#d8dee9"
+cursor = "#88c0d0"
+selection = "#434c5e"
+muted = "#7b88a1"
+normal = { black = "#3b4252", red = "#bf616a", green = "#a3be8c", yellow = "#ebcb8b", blue = "#81a1c1", magenta = "#b48ead", cyan = "#88c0d0", white = "#e5e9f0" }
+bright = { black = "#4c566a", red = "#bf616a", green = "#a3be8c", yellow = "#ebcb8b", blue = "#81a1c1", magenta = "#b48ead", cyan = "#8fbcbb", white = "#eceff4" }
+
+[[theme]]
+name = "Gruvbox Dark"
+background = "#282828"
+foreground = "#ebdbb2"
+cursor = "#fabd2f"
+selection = "#504945"
+muted = "#928374"
+normal = { black = "#282828", red = "#cc241d", green = "#98971a", yellow = "#d79921", blue = "#458588", magenta = "#b16286", cyan = "#689d6a", white = "#a89984" }
+bright = { black = "#928374", red = "#fb4934", green = "#b8bb26", yellow = "#fabd2f", blue = "#83a598", magenta = "#d3869b", cyan = "#8ec07c", white = "#ebdbb2" }
+
+[[theme]]
+name = "Solarized Dark"
+background = "#002b36"
+foreground = "#839496"
+cursor = "#268bd2"
+selection = "#073642"
+muted = "#586e75"
+normal = { black = "#073642", red = "#dc322f", green = "#859900", yellow = "#b58900", blue = "#268bd2", magenta = "#d33682", cyan = "#2aa198", white = "#eee8d5" }
+bright = { black = "#586e75", red = "#cb4b16", green = "#859900", yellow = "#b58900", blue = "#268bd2", magenta = "#6c71c4", cyan = "#2aa198", white = "#fdf6e3" }
+
+[[theme]]
+name = "Solarized Light"
+background = "#fdf6e3"
+foreground = "#657b83"
+cursor = "#268bd2"
+selection = "#eee8d5"
+muted = "#93a1a1"
+normal = { black = "#073642", red = "#dc322f", green = "#859900", yellow = "#b58900", blue = "#268bd2", magenta = "#d33682", cyan = "#2aa198", white = "#eee8d5" }
+bright = { black = "#586e75", red = "#cb4b16", green = "#859900", yellow = "#b58900", blue = "#268bd2", magenta = "#6c71c4", cyan = "#2aa198", white = "#fdf6e3" }

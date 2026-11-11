@@ -1,0 +1,91 @@
+name: Release
+
+# Every push to the default branch publishes a new release: the version is the
+# latest v* tag with its patch number incremented. Run the workflow manually
+# to bump the minor or major number instead.
+#
+# The version lives in git tags only: nothing is committed back. The build
+# receives it through RTERM_VERSION, which is what the app shows in its About
+# window and what `rterm --version` prints.
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increment
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+
+# Two releases must never compute the same version: run them one at a time.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, package and publish (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The full history and tags are needed to find the latest version.
+          fetch-depth: 0
+
+      - name: Compute the next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+        run: |
+          latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          if [[ -z "$latest" ]]; then
+            # First release: start from the version written in Cargo.toml.
+            next="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          else
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            case "$BUMP" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              *)     patch=$((patch + 1)) ;;
+            esac
+            next="$major.$minor.$patch"
+          fi
+          echo "Previous: ${latest:-none} -> next: v$next"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build, sign and package RTerm.app
+        run: scripts/bundle-macos.sh "${{ steps.version.outputs.version }}"
+
+      - name: Check the packaged version
+        run: |
+          reported="$(dist/RTerm.app/Contents/MacOS/rterm --version)"
+          echo "$reported"
+          test "$reported" = "RTerm ${{ steps.version.outputs.version }}"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "RTerm $VERSION" \
+            --generate-notes \
+            dist/RTerm-*.dmg dist/RTerm-*.zip dist/RTerm-*.sha256

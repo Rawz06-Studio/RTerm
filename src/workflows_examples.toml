@@ -1,0 +1,31 @@
+# RTerm workflows: commands with blanks, launched from the command palette
+# (Cmd+Shift+P, then type "workflow" or the name).
+#
+# Each .toml file in this folder can hold several. Parameters are written
+# {{name}} in the command; `arguments` gives their default values. Once the
+# workflow is inserted into the editor, Tab moves from one parameter to the
+# next. Edit or delete these examples as you like.
+
+[[workflow]]
+name = "Undo last commits"
+description = "Undoes commits while keeping their changes"
+command = "git reset --soft HEAD~{{count}}"
+arguments = { count = 1 }
+
+[[workflow]]
+name = "Search text in files"
+description = "Recursive search, with line numbers"
+command = "grep -rn --include='{{files}}' '{{text}}' {{directory}}"
+arguments = { files = "*.rs", text = "TODO", directory = "." }
+
+[[workflow]]
+name = "Who is listening on a port"
+description = "Finds the process holding a port"
+command = "lsof -nP -iTCP:{{port}} -sTCP:LISTEN"
+arguments = { port = 3000 }
+
+[[workflow]]
+name = "Largest folders"
+description = "Ranks subfolders by size"
+command = "du -sh {{directory}}/* | sort -rh | head -n {{count}}"
+arguments = { directory = ".", count = 15 }

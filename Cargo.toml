@@ -1,0 +1,29 @@
+[package]
+name = "rterm"
+version = "0.1.0"
+edition = "2024"
+description = "A modern, fully local terminal: blocks, input editor, completion. No account, no cloud."
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+alacritty_terminal = "0.26"
+anyhow = "1.0.104"
+dirs = "7.0.0"
+futures = "0.3"
+# runtime_shaders: compiles the Metal shaders at launch, which avoids having
+# to install Xcode's Metal toolchain to build RTerm.
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+libc = "0.2.191"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.1"
+toml_edit = "0.25.19"
+unicode-width = "0.2.3"
+
+[profile.release]
+# Distributed binary: smaller and a bit faster, at the cost of a longer
+# build.
+lto = "thin"
+codegen-units = 1
+strip = true

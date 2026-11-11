@@ -1,0 +1,62 @@
+# RTerm configuration
+#
+# This file is read on every launch. Any missing key takes its default value,
+# so you can keep only what you change.
+
+[font]
+family = "Menlo"
+size = 13.0
+# Line height, as a multiple of the font size.
+line_height = 1.35
+# Ligatures (Fira Code, JetBrains Mono…) are disabled by default.
+ligatures = false
+
+[window]
+width = 1000
+height = 640
+# Inner margin around the grid, in pixels.
+padding = 12
+
+[shell]
+# Leave empty to use your login shell.
+program = ""
+args = []
+# Leave empty to start in your home directory.
+working_directory = ""
+# Shell integration (zsh): shows each command in its own block and replaces
+# the prompt with the input editor. Set to false for a classic terminal.
+integration = true
+
+[terminal]
+# Number of scrollback lines kept.
+scrollback = 10000
+# "block", "beam" or "underline".
+cursor_shape = "beam"
+# true: the Option key sends Escape+key (Meta) instead of the keyboard's
+# special characters. Keep false on layouts that need Option to type
+# characters such as | { } [ ] ~ #.
+option_as_meta = false
+
+[history]
+# Records the directory, exit code and duration of each command in
+# ~/.config/rterm/history.db (a local database, never sent anywhere). This
+# information shows up in the history search (Ctrl+R).
+record = true
+
+[appearance]
+# Color theme. Built-in themes: "RTerm Dark", "RTerm Light", "Dracula",
+# "Nord", "Gruvbox Dark", "Solarized Dark", "Solarized Light".
+# You can also create your own in ~/.config/rterm/themes/<name>.toml.
+# The command palette (Cmd+Shift+P) switches themes and updates this line.
+theme = "RTerm Dark"
+# Tab layout: "horizontal" (at the top of the window) or "vertical" (in a
+# column on the left). The command palette can switch between them.
+tabs = "horizontal"
+
+# To tweak a few colors of the chosen theme without creating a new one:
+# [colors]
+# background = "#000000"
+# cursor = "#ffcc00"
+#
+# [colors.normal]
+# red = "#ff5555"

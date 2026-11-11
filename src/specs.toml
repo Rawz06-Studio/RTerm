@@ -1,0 +1,234 @@
+# Command descriptions used for completion.
+#
+# To add more, create a file ~/.config/rterm/completions/<name>.toml in the
+# same format. A command defined there replaces the one of the same name here.
+#
+#   [command]
+#   description = "…"
+#   [command.subcommands]            subcommands and their description
+#   [command.options]                options valid everywhere
+#   [command.flags.<subcommand>]     options specific to a subcommand
+
+[git]
+description = "Version control"
+
+[git.subcommands]
+add = "Add file contents to the index"
+bisect = "Binary search for the commit that introduced a bug"
+blame = "Show who last modified each line"
+branch = "List, create or delete branches"
+checkout = "Switch branches or restore files"
+cherry-pick = "Apply existing commits"
+clean = "Remove untracked files"
+clone = "Clone a repository"
+commit = "Record the staged changes"
+diff = "Show changes"
+fetch = "Download objects from a remote"
+init = "Create an empty repository"
+log = "Show the commit history"
+merge = "Join branches together"
+mv = "Move or rename a file"
+pull = "Fetch from and integrate with a remote"
+push = "Send commits to a remote"
+rebase = "Reapply commits on top of another base"
+reflog = "History of where HEAD has been"
+remote = "Manage remotes"
+reset = "Reset HEAD to a given state"
+restore = "Restore files"
+revert = "Undo commits with a new commit"
+rm = "Remove files from tracking"
+show = "Show an object (commit, tag…)"
+stash = "Set aside the changes in progress"
+status = "Show the working tree status"
+switch = "Switch branches"
+tag = "List, create or delete tags"
+worktree = "Manage multiple working trees"
+
+[git.options]
+"--version" = "Print the git version"
+"--help" = "Show help"
+"-C" = "Run as if git was started in this directory"
+
+[git.flags.add]
+"-A" = "Add all changes"
+"-p" = "Choose which hunks to add"
+"-u" = "Only files that are already tracked"
+
+[git.flags.commit]
+"-m" = "Commit message"
+"-a" = "Stage modified files first"
+"--amend" = "Amend the last commit"
+"--no-edit" = "Keep the existing message"
+"--no-verify" = "Skip hooks"
+
+[git.flags.push]
+"--force-with-lease" = "Force, unless the remote has moved"
+"--force" = "Overwrite the remote history"
+"-u" = "Set the upstream branch"
+"--tags" = "Also push tags"
+
+[git.flags.pull]
+"--rebase" = "Rebase local commits instead of merging"
+"--ff-only" = "Only if a fast-forward is enough"
+
+[git.flags.log]
+"--oneline" = "One commit per line"
+"--graph" = "Draw the branch graph"
+"--all" = "All branches"
+"-n" = "Number of commits to show"
+"--stat" = "Summary of changed files"
+
+[git.flags.diff]
+"--staged" = "What is staged"
+"--stat" = "Summary per file"
+"--name-only" = "Only file names"
+
+[git.flags.branch]
+"-d" = "Delete a merged branch"
+"-D" = "Delete a branch, even if unmerged"
+"-m" = "Rename a branch"
+"-a" = "Also list remote branches"
+
+[git.flags.checkout]
+"-b" = "Create the branch and switch to it"
+
+[git.flags.switch]
+"-c" = "Create the branch and switch to it"
+
+[git.flags.rebase]
+"-i" = "Interactive rebase"
+"--continue" = "Continue after resolving conflicts"
+"--abort" = "Abort the rebase"
+
+[git.flags.reset]
+"--soft" = "Keep the changes staged"
+"--hard" = "Discard all changes"
+
+[git.flags.stash]
+"-u" = "Include untracked files"
+
+[git.flags.clean]
+"-n" = "Show what would be removed"
+"-f" = "Actually remove"
+"-d" = "Include directories"
+
+[cargo]
+description = "Rust package manager"
+
+[cargo.subcommands]
+add = "Add a dependency"
+bench = "Run the benchmarks"
+build = "Compile the package"
+check = "Check without producing a binary"
+clean = "Remove the target directory"
+clippy = "Run the linter"
+doc = "Build the documentation"
+fmt = "Format the code"
+init = "Create a package in the current directory"
+install = "Install a Rust binary"
+new = "Create a new package"
+publish = "Publish the package to crates.io"
+remove = "Remove a dependency"
+run = "Compile and run the binary"
+search = "Search crates.io for a package"
+test = "Run the tests"
+tree = "Show the dependency tree"
+update = "Update the dependencies"
+
+[cargo.options]
+"--version" = "Print the cargo version"
+"--help" = "Show help"
+
+[cargo.flags.build]
+"--release" = "Build with optimizations"
+"--all-features" = "Enable every feature"
+"--features" = "Features to enable"
+"-p" = "Package to build"
+
+[cargo.flags.run]
+"--release" = "Build with optimizations"
+"--bin" = "Binary to run"
+"--example" = "Example to run"
+
+[cargo.flags.test]
+"--release" = "Build with optimizations"
+"--no-run" = "Compile without running the tests"
+"--lib" = "Only the library's tests"
+
+[cargo.flags.add]
+"--features" = "Features to enable"
+"--dev" = "Development dependency"
+
+[npm]
+description = "Node.js package manager"
+
+[npm.subcommands]
+ci = "Install exactly what the lockfile says"
+init = "Create a package.json"
+install = "Install the dependencies"
+link = "Link a local package"
+list = "List installed packages"
+outdated = "List outdated packages"
+publish = "Publish the package"
+run = "Run a package.json script"
+start = "Run the start script"
+test = "Run the test script"
+uninstall = "Uninstall a package"
+update = "Update the packages"
+
+[npm.flags.install]
+"--save-dev" = "Development dependency"
+"-g" = "Global install"
+
+[docker]
+description = "Containers"
+
+[docker.subcommands]
+build = "Build an image"
+compose = "Manage a multi-container application"
+exec = "Run a command in a container"
+images = "List images"
+logs = "Show a container's logs"
+ps = "List containers"
+pull = "Download an image"
+push = "Upload an image"
+rm = "Remove containers"
+rmi = "Remove images"
+run = "Create and start a container"
+start = "Start stopped containers"
+stop = "Stop containers"
+system = "Manage Docker (prune, df…)"
+
+[docker.flags.run]
+"-it" = "Interactive mode with a terminal"
+"--rm" = "Remove the container on exit"
+"-d" = "Run in the background"
+"-p" = "Publish a port (host:container)"
+"-v" = "Mount a volume"
+"-e" = "Set an environment variable"
+"--name" = "Container name"
+
+[docker.flags.ps]
+"-a" = "Include stopped containers"
+
+[docker.flags.logs]
+"-f" = "Follow the logs"
+
+[brew]
+description = "macOS package manager"
+
+[brew.subcommands]
+cleanup = "Remove old versions"
+doctor = "Diagnose the installation"
+info = "Information about a package"
+install = "Install a package"
+list = "List installed packages"
+outdated = "List outdated packages"
+search = "Search for a package"
+services = "Manage background services"
+uninstall = "Uninstall a package"
+update = "Update Homebrew"
+upgrade = "Upgrade the packages"
+
+[brew.flags.install]
+"--cask" = "Install an application"
