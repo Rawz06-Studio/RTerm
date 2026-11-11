@@ -22,6 +22,7 @@ pub struct Config {
     pub terminal: TerminalConfig,
     pub history: HistoryConfig,
     pub updates: UpdatesConfig,
+    pub blocks: BlocksConfig,
     pub appearance: Appearance,
     /// Tweaks to the chosen theme (`[colors]` section), empty by default.
     #[serde(default)]
@@ -38,10 +39,49 @@ pub struct UpdatesConfig {
     pub check: bool,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+pub struct BlocksConfig {
+    /// Shows how long each command took in its header.
+    pub show_duration: bool,
+    /// Tighter blocks, without the line between them.
+    pub compact: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Appearance {
+    /// Follow the system's light or dark mode, or always use `theme`.
+    pub theme_mode: ThemeMode,
+    /// The theme used in manual mode.
     pub theme: String,
+    /// The themes used in system mode.
+    pub light_theme: String,
+    pub dark_theme: String,
     pub tabs: TabsLayout,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    System,
+    Manual,
+}
+
+impl ThemeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThemeMode::System => "system",
+            ThemeMode::Manual => "manual",
+        }
+    }
+}
+
+impl TabsLayout {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TabsLayout::Horizontal => "horizontal",
+            TabsLayout::Vertical => "vertical",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -201,31 +241,26 @@ impl Config {
     }
 }
 
-/// Saves the chosen theme to the config file.
-pub fn save_theme(name: &str) -> Result<()> {
-    save_appearance("theme", name)
-}
-
-/// Saves the tab layout to the config file.
-pub fn save_tabs_layout(layout: TabsLayout) -> Result<()> {
-    save_appearance("tabs", match layout {
-        TabsLayout::Horizontal => "horizontal",
-        TabsLayout::Vertical => "vertical",
-    })
-}
-
-fn save_appearance(key: &str, value: &str) -> Result<()> {
+/// Writes settings to the config file, as `(section, key, value)`.
+/// Comments and the rest of the file are kept as they are.
+pub fn save(settings: &[(&str, &str, toml_edit::Value)]) -> Result<()> {
     let path = Config::path().context("home directory not found")?;
     let text = std::fs::read_to_string(&path).unwrap_or_default();
-    std::fs::write(&path, with_appearance(&text, key, value)?)
+    std::fs::write(&path, with_settings(&text, settings)?)
         .with_context(|| format!("writing {}", path.display()))
 }
 
-/// The config text with `appearance.<key>` replaced; comments and the
-/// formatting of the rest of the file are preserved.
-fn with_appearance(text: &str, key: &str, value: &str) -> Result<String> {
+/// The config text with the given settings replaced.
+fn with_settings(text: &str, settings: &[(&str, &str, toml_edit::Value)]) -> Result<String> {
     let mut document: toml_edit::DocumentMut = text.parse()?;
-    document["appearance"][key] = toml_edit::value(value);
+    for (section, key, value) in settings {
+        let mut value = value.clone();
+        // Keep a comment written after the old value on the same line.
+        if let Some(old) = document.get(section).and_then(|table| table.get(key)).and_then(|item| item.as_value()) {
+            *value.decor_mut() = old.decor().clone();
+        }
+        document[section][key] = toml_edit::Item::Value(value);
+    }
     Ok(document.to_string())
 }
 
@@ -271,16 +306,31 @@ mod tests {
     #[test]
     fn theme_choice_is_saved_without_losing_comments() {
         let text = "# my comment\n[font]\nsize = 15.0\n";
-        let updated = with_appearance(text, "theme", "Nord").unwrap();
+        let set = |text: &str, key: &str, value: &str| {
+            with_settings(text, &[("appearance", key, value.into())]).unwrap()
+        };
+        let updated = set(text, "theme", "Nord");
         assert!(updated.contains("# my comment"));
         assert_eq!(Config::from_user_toml(&updated).unwrap().appearance.theme, "Nord");
 
-        let updated =
-            with_appearance("[appearance]\ntheme = \"Nord\" # choisi\n", "theme", "Dracula").unwrap();
+        let updated = set("[appearance]\ntheme = \"Nord\" # picked\n", "theme", "Dracula");
         assert_eq!(Config::from_user_toml(&updated).unwrap().appearance.theme, "Dracula");
 
-        let updated = with_appearance(&updated, "tabs", "vertical").unwrap();
+        let updated = set(&updated, "tabs", "vertical");
         let config = Config::from_user_toml(&updated).unwrap();
         assert_eq!((config.appearance.theme.as_str(), config.appearance.tabs), ("Dracula", TabsLayout::Vertical));
+    }
+
+    #[test]
+    fn settings_of_any_type_are_saved() {
+        let updated = with_settings(
+            "[blocks]\ncompact = false # keep\n",
+            &[("blocks", "compact", true.into()), ("font", "size", 15.0.into())],
+        )
+        .unwrap();
+        assert!(updated.contains("# keep"));
+        let config = Config::from_user_toml(&updated).unwrap();
+        assert!(config.blocks.compact);
+        assert_eq!(config.font.size, 15.0);
     }
 }

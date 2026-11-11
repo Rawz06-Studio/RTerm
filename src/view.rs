@@ -60,10 +60,12 @@ pub enum PaneEvent {
     Exited,
 }
 
-/// Margin above and below a block's content.
+/// Margin above and below a block's content, normal and compact.
 const BLOCK_PADDING: Pixels = px(10.);
-/// Space between a block's header and its output.
+const COMPACT_BLOCK_PADDING: Pixels = px(4.);
+/// Space between a block's header and its output, normal and compact.
 const HEADER_GAP: Pixels = px(4.);
+const COMPACT_HEADER_GAP: Pixels = px(1.);
 /// Margin above and below the input editor.
 const EDITOR_PADDING: Pixels = px(10.);
 /// Cells reserved for the prompt symbol, to the left of the input.
@@ -244,6 +246,15 @@ impl TerminalView {
 
     pub fn set_palette(&mut self, palette: Rc<Palette>, cx: &mut Context<Self>) {
         self.palette = palette;
+        cx.notify();
+    }
+
+    /// Applies settings changed while RTerm runs (block style, font size).
+    pub fn set_config(&mut self, config: Rc<Config>, cx: &mut Context<Self>) {
+        if config.font.size != self.config.font.size {
+            self.font_size = config.font.size;
+        }
+        self.config = config;
         cx.notify();
     }
 
@@ -1137,6 +1148,12 @@ impl TerminalView {
         let red = palette.indexed(NamedColor::Red as usize, &no_overrides);
         let green = palette.indexed(NamedColor::Green as usize, &no_overrides);
         let border = hsla(mix(palette.foreground(), background, 0.12));
+        let blocks_config = self.config.blocks;
+        let (block_padding, header_gap) = if blocks_config.compact {
+            (COMPACT_BLOCK_PADDING, COMPACT_HEADER_GAP)
+        } else {
+            (BLOCK_PADDING, HEADER_GAP)
+        };
 
         // The editor is only displayed when the shell is waiting for a command.
         let show_editor = mode == Mode::Editing;
@@ -1156,11 +1173,11 @@ impl TerminalView {
         }
         let measure = |id: u64, command: &str, rows: usize| {
             let command_rows = command_row_count(command, columns);
-            let mut height = BLOCK_PADDING * 2. + cell_height * rows as f32;
+            let mut height = block_padding * 2. + cell_height * rows as f32;
             if command_rows > 0 {
                 height += cell_height * (1 + command_rows) as f32;
                 if rows > 0 {
-                    height += HEADER_GAP;
+                    height += header_gap;
                 }
             }
             Measure { id, command_rows, rows, height }
@@ -1231,16 +1248,18 @@ impl TerminalView {
                     hsla(tint),
                 ));
             }
-            layer.quads_below.push(fill(
-                Bounds::new(block_bounds.origin, size(viewport.size.width, px(1.))),
-                border,
-            ));
+            if !blocks_config.compact {
+                layer.quads_below.push(fill(
+                    Bounds::new(block_bounds.origin, size(viewport.size.width, px(1.))),
+                    border,
+                ));
+            }
 
-            let mut y = top + BLOCK_PADDING;
+            let mut y = top + block_padding;
             if measure.command_rows > 0 {
                 layer.labels.push(Label {
                     origin: point(origin_x, y),
-                    text: source.meta(),
+                    text: source.meta(blocks_config.show_duration),
                     color: if failed { hsla(red) } else { muted },
                     bold: false,
                     underline: false,
@@ -1259,7 +1278,7 @@ impl TerminalView {
                     y += cell_height;
                 }
                 if measure.rows > 0 {
-                    y += HEADER_GAP;
+                    y += header_gap;
                 }
             }
 
@@ -1648,11 +1667,13 @@ impl Source<'_> {
         matches!(self, Source::Frozen(block) if block.exit.is_some_and(|code| code != 0))
     }
 
-    /// The header's info line: directory, duration, exit code.
-    fn meta(&self) -> String {
+    /// The header's info line: directory, duration (if `show_duration`),
+    /// exit code.
+    fn meta(&self, show_duration: bool) -> String {
         let (cwd, status) = match self {
             Source::Frozen(block) => {
-                let mut status = block.duration.map(format_duration).unwrap_or_default();
+                let mut status =
+                    block.duration.filter(|_| show_duration).map(format_duration).unwrap_or_default();
                 if let Some(code) = block.exit.filter(|code| *code != 0) {
                     if !status.is_empty() {
                         status.push_str("  ·  ");

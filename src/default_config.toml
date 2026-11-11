@@ -43,6 +43,12 @@ option_as_meta = false
 # information shows up in the history search (Ctrl+R).
 record = true
 
+[blocks]
+# Shows how long each command took, next to its directory.
+show_duration = true
+# Tighter blocks, without the line between them.
+compact = false
+
 [updates]
 # Checks GitHub for a new release at launch and once a day. This is the
 # only network request RTerm ever makes, and it sends nothing about you.
@@ -52,10 +58,16 @@ record = true
 check = true
 
 [appearance]
-# Color theme. Built-in themes: "RTerm Dark", "RTerm Light", "Dracula",
-# "Nord", "Gruvbox Dark", "Solarized Dark", "Solarized Light".
-# You can also create your own in ~/.config/rterm/themes/<name>.toml.
-# The command palette (Cmd+Shift+P) switches themes and updates this line.
+# Built-in themes: "RTerm Dark", "RTerm Light", "Dracula", "Nord",
+# "Gruvbox Dark", "Solarized Dark", "Solarized Light". You can also create
+# your own in ~/.config/rterm/themes/<name>.toml.
+#
+# "system": follow macOS's light or dark mode, with light_theme and
+# dark_theme. "manual": always use theme.
+# Settings (Cmd+,) and the command palette update these lines.
+theme_mode = "system"
+light_theme = "RTerm Light"
+dark_theme = "RTerm Dark"
 theme = "RTerm Dark"
 # Tab layout: "horizontal" (at the top of the window) or "vertical" (in a
 # column on the left). The command palette can switch between them.

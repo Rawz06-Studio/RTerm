@@ -11,10 +11,11 @@ use gpui::{
 
 use crate::commands;
 use crate::completion::Engine;
-use crate::config::{self, Config, TabsLayout};
+use crate::config::{Config, TabsLayout, ThemeMode};
 use crate::history::HistoryStore;
 use crate::layout::Node;
 use crate::palette::{Palette, hsla, mix};
+use crate::settings::{self, Setting, Settings, is_dark, wanted_theme};
 use crate::themes;
 use crate::update::{self, CheckForUpdates, InstallUpdate, RestartToUpdate, Status, Updater};
 use crate::view::{
@@ -39,6 +40,8 @@ actions!(
         FocusPreviousPane,
         TogglePalette,
         OpenConfig,
+        OpenSettings,
+        UseSystemTheme,
         OpenWorkflows,
         ToggleTabsLayout,
         ActivateTab1,
@@ -112,41 +115,66 @@ pub struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
     palette: Option<PaletteUi>,
-    /// The "About" window, when it is open.
-    about: Option<FocusHandle>,
+    /// Whether macOS is in dark mode, for the "system" theme mode.
+    dark: bool,
     window_title: String,
     /// The last error to show (unreadable config, invalid theme…).
     error: Option<SharedString>,
     updater: Entity<Updater>,
+    settings: Entity<Settings>,
 }
 
 impl Workspace {
+    /// `config_error`: why the config file could not be read, if it could not.
     pub fn new(
-        config: Rc<Config>,
         config_error: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (theme, theme_error) =
-            themes::resolve_or_default(&config.appearance.theme, &config.colors);
+        let settings = settings::global(cx);
+        let config = settings.read(cx).config.clone();
+        let dark = is_dark(window.appearance());
+        let wanted = wanted_theme(&config, dark);
+        let (theme, theme_error) = themes::resolve_or_default(&wanted, &config.colors);
         let mut workspace = Workspace {
             colors: Rc::new(Palette::new(&theme)),
             history: Rc::new(RefCell::new(HistoryStore::load(config.history.record))),
             completion: Rc::new(Engine::load()),
-            theme: config.appearance.theme.clone(),
+            theme: wanted,
             tabs_layout: config.appearance.tabs,
             config,
             tabs: Vec::new(),
             active: 0,
             palette: None,
-            about: None,
+            dark,
             window_title: String::new(),
             updater: update::global(cx),
+            settings: settings.clone(),
             error: config_error
                 .map(|error| format!("Config ignored, using default values: {error}"))
                 .or(theme_error)
                 .map(Into::into),
         };
+
+        // In "system" mode, the theme follows macOS's light or dark mode.
+        cx.observe_window_appearance(window, |this, window, cx| {
+            this.dark = is_dark(window.appearance());
+            this.refresh_theme(cx);
+        })
+        .detach();
+
+        // Settings changed in the Settings window or another window.
+        cx.observe(&settings, |this, settings, cx| {
+            let (config, error) = {
+                let settings = settings.read(cx);
+                (settings.config.clone(), settings.error.clone())
+            };
+            if let Some(error) = error {
+                this.error = Some(error.into());
+            }
+            this.apply_config(config, cx);
+        })
+        .detach();
 
         // Redrawn when the update status changes; a failure is explained.
         cx.observe(&workspace.updater, |this, updater, cx| {
@@ -183,7 +211,8 @@ impl Workspace {
                         "split-down" => this.split(Axis::Vertical, window, cx),
                         "previous-pane" => this.focus_pane(-1, window, cx),
                         "palette" => this.toggle_palette(&TogglePalette, window, cx),
-                        "about" => this.toggle_about(&About, window, cx),
+                        "about" => crate::about::open(cx),
+                        "settings" => settings::open_window(cx),
                         // Bypasses the action, so that nothing is written to the config.
                         "vertical-tabs" => this.tabs_layout = TabsLayout::Vertical,
                         other => {
@@ -391,13 +420,34 @@ impl Workspace {
 
     // --- Theme and configuration --------------------------------------------
 
-    /// Applies a theme to every pane and remembers it in the config.
+    /// A theme picked in the palette: it is used from now on, whatever the
+    /// system's appearance ("manual" mode).
     fn set_theme(&mut self, name: &str, cx: &mut Context<Self>) {
-        if self.apply_theme(name, cx) {
-            self.error = config::save_theme(name)
-                .err()
-                .map(|error| format!("Theme applied but not saved: {error:#}").into());
+        self.settings.update(cx, |settings, cx| settings.set_manual_theme(name, cx));
+    }
+
+    fn use_system_theme(&mut self, _: &UseSystemTheme, _: &mut Window, cx: &mut Context<Self>) {
+        settings::change(Setting::ThemeMode(ThemeMode::System), cx);
+    }
+
+    /// Applies the theme the settings call for, if it is not already shown.
+    fn refresh_theme(&mut self, cx: &mut Context<Self>) {
+        let wanted = wanted_theme(&self.config, self.dark);
+        if wanted != self.theme {
+            self.apply_theme(&wanted, cx);
         }
+    }
+
+    /// Follows new settings: every pane, the tab layout and the theme.
+    fn apply_config(&mut self, config: Rc<Config>, cx: &mut Context<Self>) {
+        self.config = config;
+        self.tabs_layout = self.config.appearance.tabs;
+        for pane in self.all_panes() {
+            let config = self.config.clone();
+            pane.update(cx, |pane, cx| pane.set_config(config, cx));
+        }
+        self.refresh_theme(cx);
+        cx.notify();
     }
 
     /// Applies a theme without touching the config. Returns `false` if it is
@@ -422,105 +472,10 @@ impl Workspace {
     }
 
     fn open_config(&mut self, _: &OpenConfig, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = Config::path() else {
-            return;
-        };
-        // `open -t` opens the file in the default text editor.
-        if let Err(error) = std::process::Command::new("open").arg("-t").arg(&path).spawn() {
-            self.error = Some(format!("Failed to open {}: {error}", path.display()).into());
+        if let Err(error) = settings::open_config_file() {
+            self.error = Some(format!("{error:#}").into());
             cx.notify();
         }
-    }
-
-    /// Opens or closes the "About" window.
-    fn toggle_about(&mut self, _: &About, window: &mut Window, cx: &mut Context<Self>) {
-        if self.about.take().is_some() {
-            self.focus_active(window, cx);
-        } else {
-            let focus_handle = cx.focus_handle();
-            window.focus(&focus_handle);
-            self.about = Some(focus_handle);
-        }
-        cx.notify();
-    }
-
-    fn render_about(&self, focus_handle: &FocusHandle, cx: &mut Context<Self>) -> AnyElement {
-        let background = self.colors.background();
-        let foreground = hsla(self.colors.foreground());
-        let muted = hsla(self.colors.muted);
-        let accent = hsla(self.colors.cursor());
-        let config_path = Config::path()
-            .map(|path| crate::view::display_path(&path))
-            .unwrap_or_default();
-        let line = |label: &'static str, value: String| {
-            div()
-                .flex()
-                .gap_3()
-                .child(div().w(px(92.)).flex_none().text_color(muted).child(label))
-                .child(div().min_w_0().child(value))
-        };
-
-        // A veil over the whole window: a click or a key press closes it.
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(hsla(background).opacity(0.6))
-            .track_focus(focus_handle)
-            .on_key_down(cx.listener(|this, _, window, cx| {
-                cx.stop_propagation();
-                this.toggle_about(&About, window, cx);
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.toggle_about(&About, window, cx)),
-            )
-            .child(
-                div()
-                    .w(px(440.))
-                    .p_6()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .bg(hsla(mix(self.colors.foreground(), background, 0.06)))
-                    .border_1()
-                    .border_color(hsla(mix(self.colors.foreground(), background, 0.16)))
-                    .rounded_lg()
-                    .shadow_lg()
-                    .text_size(px(13.))
-                    .text_color(foreground)
-                    .child(
-                        div()
-                            .flex()
-                            .items_baseline()
-                            .gap_3()
-                            .child(div().text_size(px(26.)).text_color(accent).child("❯"))
-                            .child(div().text_size(px(26.)).child("RTerm"))
-                            .child(div().text_color(muted).child(format!("version {}", crate::VERSION))),
-                    )
-                    .child(
-                        "A modern, fully local terminal: no account, no cloud, no AI. \
-                         Everything you type stays on your machine.",
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(line("Version", crate::VERSION.to_owned()))
-                            .child(line("Config", config_path))
-                            .child(line("Theme", self.theme.clone()))
-                            .child(line("Updates", self.updater.read(cx).summary()))
-                            .child(line("License", "MIT".to_owned())),
-                    )
-                    .child(div().text_color(muted).text_size(px(12.)).child("Click or press a key to close")),
-            )
-            .into_any_element()
     }
 
     fn open_workflows(&mut self, _: &OpenWorkflows, _: &mut Window, cx: &mut Context<Self>) {
@@ -574,7 +529,8 @@ impl Workspace {
                 "",
                 Box::new(ToggleTabsLayout),
             ),
-            action("Open Configuration", "⌘,", Box::new(OpenConfig)),
+            action("Settings", "⌘,", Box::new(OpenSettings)),
+            action("Open Settings File", "", Box::new(OpenConfig)),
             action("Open Workflows Folder", "", Box::new(OpenWorkflows)),
             action("About RTerm", "", Box::new(About)),
             action("New Window", "⌘N", Box::new(NewWindow)),
@@ -590,9 +546,15 @@ impl Workspace {
             Status::Ready(_) => commands.push(action("Restart to Update", "", Box::new(RestartToUpdate))),
             _ => {}
         }
+        let system = self.config.appearance.theme_mode == ThemeMode::System;
+        commands.push(Command {
+            label: "Theme: Match System (light or dark)".to_owned(),
+            hint: if system { "current".to_owned() } else { String::new() },
+            run: Run::Action(Box::new(UseSystemTheme)),
+        });
         commands.extend(themes::all().into_iter().map(|theme| Command {
             label: format!("Theme: {}", theme.name),
-            hint: if theme.name == self.theme { "current".to_owned() } else { String::new() },
+            hint: if !system && theme.name == self.theme { "current".to_owned() } else { String::new() },
             run: Run::Theme(theme.name),
         }));
 
@@ -872,14 +834,11 @@ impl Workspace {
     }
 
     fn toggle_tabs_layout(&mut self, _: &ToggleTabsLayout, _: &mut Window, cx: &mut Context<Self>) {
-        self.tabs_layout = match self.tabs_layout {
+        let layout = match self.tabs_layout {
             TabsLayout::Horizontal => TabsLayout::Vertical,
             TabsLayout::Vertical => TabsLayout::Horizontal,
         };
-        self.error = config::save_tabs_layout(self.tabs_layout)
-            .err()
-            .map(|error| format!("Layout applied but not saved: {error:#}").into());
-        cx.notify();
+        settings::change(Setting::Tabs(layout), cx);
     }
 
     fn render_palette(&self, palette: &PaletteUi, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1074,7 +1033,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::open_config))
             .on_action(cx.listener(Self::open_workflows))
             .on_action(cx.listener(Self::toggle_tabs_layout))
-            .on_action(cx.listener(Self::toggle_about));
+            .on_action(cx.listener(Self::use_system_theme));
         let root = activate_tab!(
             root,
             ActivateTab1 => 0, ActivateTab2 => 1, ActivateTab3 => 2,
@@ -1121,6 +1080,6 @@ impl Render for Workspace {
             root.child(self.render_tab_bar(&titles, cx)).child(main)
         };
         root.children(self.palette.as_ref().map(|palette| self.render_palette(palette, cx)))
-            .children(self.about.clone().map(|focus_handle| self.render_about(&focus_handle, cx)))
+
     }
 }

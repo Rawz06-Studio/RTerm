@@ -91,8 +91,9 @@ selected; `Tab` jumps to the next one.
 ### Themes
 
 Seven built-in themes — RTerm Dark, RTerm Light, Dracula, Nord, Gruvbox Dark,
-Solarized Dark and Solarized Light — switchable from the palette. Add your own
-as `~/.config/rterm/themes/<name>.toml`.
+Solarized Dark and Solarized Light. By default RTerm follows macOS's light or
+dark mode, with a theme for each; pick **Manual** in Settings to keep a single
+one. Add your own as `~/.config/rterm/themes/<name>.toml`.
 
 ## Install
 
@@ -158,13 +159,18 @@ single-user Mac) to replace itself.
 | New line in the editor | `Shift+Enter` |
 | Clear blocks | `Cmd+K` |
 | Font size | `Cmd+=` / `Cmd+-` / `Cmd+0` |
-| Open the configuration file | `Cmd+,` |
+| Settings | `Cmd+,` |
 
 The editor also understands the usual readline keys (`Ctrl+A`, `Ctrl+E`,
 `Ctrl+K`, `Ctrl+U`, `Ctrl+W`) and macOS text shortcuts (`Option+←/→`,
 `Cmd+←/→`, `Cmd+Backspace`).
 
 ## Configuration
+
+`Cmd+,` opens **Settings** for the everyday options: theme (match the system
+or manual), tab position, font size, command durations, compact blocks and
+update checks. Changes apply immediately and are saved to `config.toml`,
+whose comments are kept.
 
 Everything lives in `~/.config/rterm/`:
 
@@ -184,14 +190,19 @@ family = "JetBrains Mono"
 size = 14.0
 
 [appearance]
+theme_mode = "manual"   # or "system", with light_theme and dark_theme
 theme = "Nord"
 tabs = "vertical"
+
+[blocks]
+show_duration = false
+compact = true          # tighter blocks, no line between them
 
 [history]
 record = false   # do not keep the local history database
 ```
 
-Press `Cmd+,` to open it in your text editor.
+**Settings → Open Settings File…** opens it in your text editor.
 
 ## Shell integration
 

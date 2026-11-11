@@ -1,3 +1,4 @@
+mod about;
 mod block;
 mod commands;
 mod completion;
@@ -11,6 +12,7 @@ mod layout;
 mod osc;
 mod palette;
 mod scene;
+mod settings;
 mod terminal;
 mod themes;
 mod update;
@@ -31,7 +33,7 @@ use crate::view::{
 use crate::workspace::{
     ActivateTab1, ActivateTab2, ActivateTab3, ActivateTab4, ActivateTab5, ActivateTab6,
     ActivateTab7, ActivateTab8, ActivateTab9, ClosePane, FocusNextPane, FocusPreviousPane,
-    About, NewTab, NewWindow, NextTab, OpenConfig, PreviousTab, Quit, SplitDown, SplitRight,
+    About, NewTab, NewWindow, NextTab, OpenConfig, OpenSettings, PreviousTab, Quit, SplitDown, SplitRight,
     TogglePalette, ToggleTabsLayout, Workspace,
 };
 
@@ -52,11 +54,21 @@ fn main() {
 
     let application = Application::new();
     // Clicking the Dock icon after closing the window opens a new one.
-    application.on_reopen(open_window);
+    application.on_reopen(|cx| open_window(None, cx));
     application.run(move |cx: &mut App| {
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_action(|_: &NewWindow, cx| open_window(cx));
-        update::init(Config::load().0.updates.check, cx);
+        cx.on_action(|_: &NewWindow, cx| open_window(None, cx));
+        cx.on_action(|_: &About, cx| about::open(cx));
+        cx.on_action(|_: &OpenSettings, cx| settings::open_window(cx));
+
+        // The configuration is read once; Settings keeps it up to date.
+        let (config, config_error) = Config::load();
+        if let Some(error) = &config_error {
+            eprintln!("rterm: config ignored ({error})");
+        }
+        let check_updates = config.updates.check;
+        settings::init(config, cx);
+        update::init(check_updates, cx);
         let terminal = Some("Terminal");
         let workspace = Some("Workspace");
         cx.bind_keys([
@@ -77,7 +89,7 @@ fn main() {
             KeyBinding::new("cmd-alt-left", FocusPreviousPane, workspace),
             KeyBinding::new("cmd-shift-p", TogglePalette, workspace),
             KeyBinding::new("cmd-p", TogglePalette, workspace),
-            KeyBinding::new("cmd-,", OpenConfig, workspace),
+            KeyBinding::new("cmd-,", OpenSettings, None),
             KeyBinding::new("cmd-1", ActivateTab1, workspace),
             KeyBinding::new("cmd-2", ActivateTab2, workspace),
             KeyBinding::new("cmd-3", ActivateTab3, workspace),
@@ -107,7 +119,8 @@ fn main() {
                     MenuItem::action("About RTerm", About),
                     MenuItem::action("Check for Updates…", update::CheckForUpdates),
                     MenuItem::separator(),
-                    MenuItem::action("Open Configuration", OpenConfig),
+                    MenuItem::action("Settings…", OpenSettings),
+                    MenuItem::action("Open Settings File", OpenConfig),
                     MenuItem::separator(),
                     MenuItem::action("Quit RTerm", Quit),
                 ],
@@ -160,19 +173,14 @@ fn main() {
             },
         ]);
 
-        open_window(cx);
+        open_window(config_error, cx);
     });
 }
 
-/// Opens a window with one tab. The configuration is read again each time,
-/// so that a new window reflects the latest changes to the file.
-fn open_window(cx: &mut App) {
-    let (config, config_error) = Config::load();
-    if let Some(error) = &config_error {
-    eprintln!("rterm: config ignored ({error})");
-    }
-    let config = std::rc::Rc::new(config);
-
+/// Opens a window with one tab. `config_error` is shown in it: only the
+/// first window gets it.
+fn open_window(config_error: Option<String>, cx: &mut App) {
+    let config = settings::global(cx).read(cx).config.clone();
     let bounds = Bounds::centered(
         None,
         size(px(config.window.width), px(config.window.height)),
@@ -190,7 +198,7 @@ fn open_window(cx: &mut App) {
     };
 
     cx.open_window(options, move |window, cx| {
-        cx.new(|cx| Workspace::new(config, config_error, window, cx))
+        cx.new(|cx| Workspace::new(config_error, window, cx))
     })
     .expect("failed to open the window");
     cx.activate(true);
