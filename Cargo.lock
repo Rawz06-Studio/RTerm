@@ -4483,6 +4483,7 @@ dependencies = [
  "libc",
  "rusqlite",
  "serde",
+ "serde_json",
  "toml 1.2.1+spec-1.1.0",
  "toml_edit 0.25.19+spec-1.1.0",
  "unicode-width",

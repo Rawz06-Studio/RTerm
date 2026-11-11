@@ -1113,7 +1113,8 @@ impl TerminalView {
         scene.clipped.cursor_bounds(origin_x, metrics)
     }
 
-    /// The block list, bottom-aligned, and the input editor below it.
+    /// The block list, top-aligned until it fills the pane, and the input
+    /// editor right below it.
     #[allow(clippy::too_many_arguments)]
     fn build_blocks(
         &mut self,
@@ -1146,13 +1147,6 @@ impl TerminalView {
         } else {
             px(0.)
         };
-        let viewport = Bounds::new(
-            bounds.origin,
-            size(bounds.size.width, bounds.size.height - editor_height),
-        );
-        scene.clip = viewport;
-        self.layout.viewport_height = viewport.size.height.into();
-
         // Height of each block, the finished ones first, then the running one.
         struct Measure {
             id: u64,
@@ -1180,9 +1174,16 @@ impl TerminalView {
             measures.push(measure(live.id, &live.command, live.row_count()));
         }
 
+        // The blocks fill the pane from the top and the editor follows the
+        // last one: it only sticks to the bottom once the blocks no longer fit.
+        let content_height: f32 = measures.iter().map(|measure| f32::from(measure.height)).sum();
+        let available = (bounds.size.height - editor_height).max(px(0.));
+        let viewport = Bounds::new(bounds.origin, size(bounds.size.width, available.min(px(content_height))));
+        scene.clip = viewport;
+        self.layout.viewport_height = viewport.size.height.into();
+
         // When the list was scrolled up, output added at the bottom must
         // not move what is being read.
-        let content_height: f32 = measures.iter().map(|measure| f32::from(measure.height)).sum();
         if self.scroll > 0.0 && content_height > self.content_height {
             self.scroll += content_height - self.content_height;
         }
@@ -1313,10 +1314,12 @@ impl TerminalView {
         // --- Input editor ---
         let layer = &mut scene.free;
         let editor_top = viewport.bottom();
-        layer.quads_below.push(fill(
-            Bounds::new(point(bounds.left(), editor_top), size(bounds.size.width, px(1.))),
-            border,
-        ));
+        if !measures.is_empty() {
+            layer.quads_below.push(fill(
+                Bounds::new(point(bounds.left(), editor_top), size(bounds.size.width, px(1.))),
+                border,
+            ));
+        }
 
         // Info line: current directory and git branch.
         let mut y = editor_top + EDITOR_PADDING;
@@ -1444,7 +1447,8 @@ impl TerminalView {
             if focused { hsla(accent) } else { muted },
         ));
 
-        // Completion or history menu, right above the editor.
+        // Completion or history menu, above the editor, or below it when
+        // the editor is near the top of the pane.
         if let Some(popup) = &self.popup {
             let view = match popup {
                 Popup::Completion { completion, selected } => PopupView {
@@ -1470,7 +1474,8 @@ impl TerminalView {
                     anchor_column: 0,
                 },
             };
-            push_popup(layer, &view, origin_x, editor_top, columns, metrics, &palette);
+            let editor_bottom = editor_top + editor_height;
+            push_popup(layer, &view, origin_x, (bounds.top(), editor_top, editor_bottom), columns, metrics, &palette);
         }
 
         self.layout.editor_top = Some(editor_top);
@@ -1490,12 +1495,14 @@ struct PopupView {
     anchor_column: usize,
 }
 
-/// Draws a menu whose bottom touches `bottom`.
+/// Draws a menu right above the editor, or right below it when the space
+/// between the top of the pane and the editor is too small.
+/// `(pane_top, editor_top, editor_bottom)` locate the editor.
 fn push_popup(
     layer: &mut Layer,
     view: &PopupView,
     origin_x: Pixels,
-    bottom: Pixels,
+    (pane_top, editor_top, editor_bottom): (Pixels, Pixels, Pixels),
     columns: usize,
     metrics: &Metrics,
     palette: &Palette,
@@ -1526,7 +1533,8 @@ fn push_popup(
     let padding = px(5.);
     let height = cell_height * lines as f32 + padding * 2.;
     let left = origin_x + cell_width * column as f32;
-    let top = bottom - px(6.) - height;
+    let above = editor_top - px(6.) - height;
+    let top = if above >= pane_top { above } else { editor_bottom + px(6.) };
     let panel = Bounds::new(point(left, top), size(cell_width * width as f32, height));
     layer.quads_below.push(
         fill(panel, hsla(mix(palette.foreground(), background, 0.07)))

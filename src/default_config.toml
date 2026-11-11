@@ -43,6 +43,14 @@ option_as_meta = false
 # information shows up in the history search (Ctrl+R).
 record = true
 
+[updates]
+# Checks GitHub for a new release at launch and once a day. This is the
+# only network request RTerm ever makes, and it sends nothing about you.
+# New versions are only installed when you click "Update to …".
+# Set to false to never check automatically ("Check for Updates" in the
+# RTerm menu still works).
+check = true
+
 [appearance]
 # Color theme. Built-in themes: "RTerm Dark", "RTerm Light", "Dracula",
 # "Nord", "Gruvbox Dark", "Solarized Dark", "Solarized Light".

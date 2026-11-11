@@ -21,6 +21,7 @@ pub struct Config {
     pub shell: ShellConfig,
     pub terminal: TerminalConfig,
     pub history: HistoryConfig,
+    pub updates: UpdatesConfig,
     pub appearance: Appearance,
     /// Tweaks to the chosen theme (`[colors]` section), empty by default.
     #[serde(default)]
@@ -30,6 +31,11 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 pub struct HistoryConfig {
     pub record: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdatesConfig {
+    pub check: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

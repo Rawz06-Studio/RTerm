@@ -16,6 +16,7 @@ use crate::history::HistoryStore;
 use crate::layout::Node;
 use crate::palette::{Palette, hsla, mix};
 use crate::themes;
+use crate::update::{self, CheckForUpdates, InstallUpdate, RestartToUpdate, Status, Updater};
 use crate::view::{
     ClearBlocks, Copy, DecreaseFontSize, IncreaseFontSize, PaneContext, PaneEvent, Paste,
     ResetFontSize, TerminalView,
@@ -27,6 +28,7 @@ actions!(
     [
         Quit,
         About,
+        NewWindow,
         NewTab,
         ClosePane,
         NextTab,
@@ -115,6 +117,7 @@ pub struct Workspace {
     window_title: String,
     /// The last error to show (unreadable config, invalid theme…).
     error: Option<SharedString>,
+    updater: Entity<Updater>,
 }
 
 impl Workspace {
@@ -138,14 +141,31 @@ impl Workspace {
             palette: None,
             about: None,
             window_title: String::new(),
+            updater: update::global(cx),
             error: config_error
                 .map(|error| format!("Config ignored, using default values: {error}"))
                 .or(theme_error)
                 .map(Into::into),
         };
 
+        // Redrawn when the update status changes; a failure is explained.
+        cx.observe(&workspace.updater, |this, updater, cx| {
+            if let Status::Failed(error) = &updater.read(cx).status {
+                this.error = Some(format!("Update failed: {error}").into());
+            }
+            cx.notify();
+        })
+        .detach();
+
+        // The test hooks below only drive the first window: a window opened
+        // later (Dock icon, Cmd+N) starts clean.
+        static FIRST_WINDOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+        let first_window = FIRST_WINDOW.swap(false, std::sync::atomic::Ordering::Relaxed);
+
         // `RTERM_RUN`: commands launched in the first pane (demos, tests).
         let script = std::env::var("RTERM_RUN")
+            .ok()
+            .filter(|_| first_window)
             .map(|script| script.lines().rev().map(str::to_owned).collect())
             .unwrap_or_default();
         if let Some(pane) = workspace.open_pane(None, script, window, cx) {
@@ -154,7 +174,7 @@ impl Workspace {
 
         // `RTERM_DEMO`: a comma-separated list of steps played at startup
         // (screenshots, tests). E.g. "split-right,theme:Nord".
-        if let Ok(demo) = std::env::var("RTERM_DEMO") {
+        if let Some(demo) = std::env::var("RTERM_DEMO").ok().filter(|_| first_window) {
             cx.defer_in(window, move |this, window, cx| {
                 for step in demo.split(',') {
                     match step.trim() {
@@ -279,14 +299,15 @@ impl Workspace {
         self.activate_tab((self.active + count - 1) % count, window, cx);
     }
 
-    /// Closes a tab and all its panes. Closing the last tab quits RTerm.
+    /// Closes a tab and all its panes. Closing the last tab closes the
+    /// window; RTerm keeps running and the Dock icon opens a new one.
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.tabs.len() {
             return;
         }
         self.tabs.remove(index);
         if self.tabs.is_empty() {
-            cx.quit();
+            window.remove_window();
             return;
         }
         if index < self.active || self.active >= self.tabs.len() {
@@ -494,6 +515,7 @@ impl Workspace {
                             .child(line("Version", crate::VERSION.to_owned()))
                             .child(line("Config", config_path))
                             .child(line("Theme", self.theme.clone()))
+                            .child(line("Updates", self.updater.read(cx).summary()))
                             .child(line("License", "MIT".to_owned())),
                     )
                     .child(div().text_color(muted).text_size(px(12.)).child("Click or press a key to close")),
@@ -523,7 +545,7 @@ impl Workspace {
 
     // --- Command palette ----------------------------------------------------
 
-    fn commands(&mut self) -> Vec<Command> {
+    fn commands(&mut self, cx: &App) -> Vec<Command> {
         let action = |label: &str, hint: &str, action: Box<dyn Action>| Command {
             label: label.to_owned(),
             hint: hint.to_owned(),
@@ -555,8 +577,19 @@ impl Workspace {
             action("Open Configuration", "⌘,", Box::new(OpenConfig)),
             action("Open Workflows Folder", "", Box::new(OpenWorkflows)),
             action("About RTerm", "", Box::new(About)),
+            action("New Window", "⌘N", Box::new(NewWindow)),
+            action("Check for Updates", "", Box::new(CheckForUpdates)),
             action("Quit RTerm", "⌘Q", Box::new(Quit)),
         ];
+        match &self.updater.read(cx).status {
+            Status::Available(release) => commands.push(action(
+                &format!("Install Update ({})", release.version),
+                "",
+                Box::new(InstallUpdate),
+            )),
+            Status::Ready(_) => commands.push(action("Restart to Update", "", Box::new(RestartToUpdate))),
+            _ => {}
+        }
         commands.extend(themes::all().into_iter().map(|theme| Command {
             label: format!("Theme: {}", theme.name),
             hint: if theme.name == self.theme { "current".to_owned() } else { String::new() },
@@ -586,7 +619,7 @@ impl Workspace {
         self.palette = Some(PaletteUi {
             query: String::new(),
             selected: 0,
-            commands: self.commands(),
+            commands: self.commands(cx),
             focus_handle,
         });
         cx.notify();
@@ -757,6 +790,40 @@ impl Workspace {
             .child(self.render_new_tab_button("+", cx))
             // The rest of the bar is used to move the window.
             .child(drag_region().flex_1().min_w(px(40.)).h_full())
+            .children(self.render_update_badge(cx))
+    }
+
+    /// A pill that announces an update and installs it when clicked.
+    fn render_update_badge(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let updater = self.updater.read(cx);
+        let text = updater.badge()?;
+        let background = self.colors.background();
+        let tint = match updater.status {
+            Status::Failed(_) => self.colors.indexed(1, &Default::default()),
+            Status::Checking | Status::UpToDate | Status::Installing(_) => self.colors.muted,
+            _ => self.colors.cursor(),
+        };
+        let updater = self.updater.clone();
+        Some(
+            div()
+                .id("update")
+                .flex_none()
+                .h(px(24.))
+                .px_3()
+                .flex()
+                .items_center()
+                .rounded_full()
+                .text_size(px(12.))
+                .text_color(hsla(tint))
+                .bg(hsla(mix(tint, background, 0.14)))
+                .hover(|style| style.bg(hsla(mix(tint, background, 0.24))))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.stop_propagation();
+                    updater.update(cx, |updater, cx| updater.activate(cx));
+                })
+                .child(text)
+                .into_any_element(),
+        )
     }
 
     /// Tabs stacked in a column on the left.
@@ -787,6 +854,7 @@ impl Workspace {
                     .children(tabs)
                     .child(self.render_new_tab_button("+ New Tab", cx)),
             )
+            .children(self.render_update_badge(cx).map(|badge| div().flex_none().p_2().child(badge)))
     }
 
     /// A strip above the content when the tabs are on the left: it shows

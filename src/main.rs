@@ -13,11 +13,10 @@ mod palette;
 mod scene;
 mod terminal;
 mod themes;
+mod update;
 mod view;
 mod workflows;
 mod workspace;
-
-use std::rc::Rc;
 
 use gpui::{
     App, Application, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
@@ -32,7 +31,7 @@ use crate::view::{
 use crate::workspace::{
     ActivateTab1, ActivateTab2, ActivateTab3, ActivateTab4, ActivateTab5, ActivateTab6,
     ActivateTab7, ActivateTab8, ActivateTab9, ClosePane, FocusNextPane, FocusPreviousPane,
-    About, NewTab, NextTab, OpenConfig, PreviousTab, Quit, SplitDown, SplitRight,
+    About, NewTab, NewWindow, NextTab, OpenConfig, PreviousTab, Quit, SplitDown, SplitRight,
     TogglePalette, ToggleTabsLayout, Workspace,
 };
 
@@ -51,18 +50,18 @@ fn main() {
         return;
     }
 
-    let (config, config_error) = Config::load();
-    if let Some(error) = &config_error {
-        eprintln!("rterm: config ignored ({error})");
-    }
-    let config = Rc::new(config);
-
-    Application::new().run(move |cx: &mut App| {
+    let application = Application::new();
+    // Clicking the Dock icon after closing the window opens a new one.
+    application.on_reopen(open_window);
+    application.run(move |cx: &mut App| {
         cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &NewWindow, cx| open_window(cx));
+        update::init(Config::load().0.updates.check, cx);
         let terminal = Some("Terminal");
         let workspace = Some("Workspace");
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-n", NewWindow, None),
             // Window: tabs, panes, palette.
             KeyBinding::new("cmd-t", NewTab, workspace),
             KeyBinding::new("cmd-w", ClosePane, workspace),
@@ -106,6 +105,7 @@ fn main() {
                 name: "RTerm".into(),
                 items: vec![
                     MenuItem::action("About RTerm", About),
+                    MenuItem::action("Check for Updates…", update::CheckForUpdates),
                     MenuItem::separator(),
                     MenuItem::action("Open Configuration", OpenConfig),
                     MenuItem::separator(),
@@ -115,6 +115,7 @@ fn main() {
             Menu {
                 name: "Shell".into(),
                 items: vec![
+                    MenuItem::action("New Window", NewWindow),
                     MenuItem::action("New Tab", NewTab),
                     MenuItem::action("Split Right", SplitRight),
                     MenuItem::action("Split Down", SplitDown),
@@ -159,28 +160,38 @@ fn main() {
             },
         ]);
 
-        let bounds = Bounds::centered(
-            None,
-            size(px(config.window.width), px(config.window.height)),
-            cx,
-        );
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("RTerm".into()),
-                appears_transparent: true,
-                traffic_light_position: Some(point(px(13.), px(12.))),
-            }),
-            window_min_size: Some(size(px(320.), px(200.))),
-            ..Default::default()
-        };
-
-        let config = config.clone();
-        let config_error = config_error.clone();
-        cx.open_window(options, move |window, cx| {
-            cx.new(|cx| Workspace::new(config, config_error, window, cx))
-        })
-        .expect("failed to open the window");
-        cx.activate(true);
+        open_window(cx);
     });
+}
+
+/// Opens a window with one tab. The configuration is read again each time,
+/// so that a new window reflects the latest changes to the file.
+fn open_window(cx: &mut App) {
+    let (config, config_error) = Config::load();
+    if let Some(error) = &config_error {
+    eprintln!("rterm: config ignored ({error})");
+    }
+    let config = std::rc::Rc::new(config);
+
+    let bounds = Bounds::centered(
+        None,
+        size(px(config.window.width), px(config.window.height)),
+        cx,
+    );
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some("RTerm".into()),
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(13.), px(12.))),
+        }),
+        window_min_size: Some(size(px(320.), px(200.))),
+        ..Default::default()
+    };
+
+    cx.open_window(options, move |window, cx| {
+        cx.new(|cx| Workspace::new(config, config_error, window, cx))
+    })
+    .expect("failed to open the window");
+    cx.activate(true);
 }

@@ -25,8 +25,9 @@ and an AI subscription.
 RTerm keeps the first part and drops the second:
 
 - **No account.** There is nothing to sign in to.
-- **No cloud.** RTerm never opens a network connection. Your history and
-  settings are plain files in `~/.config/rterm/`.
+- **No cloud.** Your history and settings are plain files in
+  `~/.config/rterm/`. The only network request RTerm makes is asking GitHub
+  whether a new version exists, and you can turn it off.
 - **No AI.** Completion comes from your `PATH`, your shell and small local
   description files.
 
@@ -118,13 +119,34 @@ Or skip the dialog altogether from a terminal:
 xattr -dr com.apple.quarantine /Applications/RTerm.app
 ```
 
-You only need to do this once per version.
+You only need to do this once: later versions install themselves (see
+[Updates](#updates)) and do not ask again.
+
+### Updates
+
+RTerm checks this repository's releases at launch and then once a day. When a
+new version is out, an **Update to …** button appears in the tab bar: click it
+to download and install it, then **Restart to Update** (or simply quit; the
+next launch uses the new version). **RTerm → Check for Updates…** checks right
+away.
+
+Nothing is installed without a click. To stop the automatic check, add this to
+`config.toml`:
+
+```toml
+[updates]
+check = false
+```
+
+RTerm must be in a folder you can write to (`/Applications` is fine on a
+single-user Mac) to replace itself.
 
 ## Keyboard shortcuts
 
 | Action | Shortcut |
 | --- | --- |
 | Command palette | `Cmd+Shift+P` or `Cmd+P` |
+| New window | `Cmd+N` |
 | New tab | `Cmd+T` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Go to tab 1–9 | `Cmd+1` … `Cmd+9` |
@@ -190,7 +212,7 @@ You need a recent stable [Rust toolchain](https://rustup.rs) and Xcode's
 command line tools.
 
 ```bash
-git clone <this repository>
+git clone https://github.com/Rawz06-Studio/RTerm.git
 cd RTerm
 cargo run
 ```
