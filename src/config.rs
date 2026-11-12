@@ -119,6 +119,7 @@ pub struct TerminalConfig {
     pub scrollback: usize,
     pub cursor_shape: CursorShapeConfig,
     pub option_as_meta: bool,
+    pub allow_osc52: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -288,16 +289,18 @@ mod tests {
         let config = Config::defaults();
         assert_eq!(config.font.family, "");
         assert_eq!(config.appearance.theme, crate::themes::DEFAULT_THEME);
+        assert!(!config.terminal.allow_osc52);
         assert!(config.colors.is_empty());
     }
 
     #[test]
     fn user_config_overrides_only_what_it_sets() {
         let config = Config::from_user_toml(
-            "[font]\nsize = 16.0\n\n[colors.normal]\nred = \"#ff0000\"\n",
+            "[font]\nsize = 16.0\n\n[terminal]\nallow_osc52 = true\n\n[colors.normal]\nred = \"#ff0000\"\n",
         )
         .unwrap();
         assert_eq!(config.font.size, 16.0);
+        assert!(config.terminal.allow_osc52);
         assert_eq!(config.font.family, "");
         assert_eq!(config.appearance.theme, crate::themes::DEFAULT_THEME);
         assert!(config.colors.contains_key("normal"));
