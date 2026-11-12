@@ -97,10 +97,10 @@ one. Add your own as `~/.config/rterm/themes/<name>.toml`.
 
 ## Install
 
-RTerm runs on **macOS 11 or later** (Apple Silicon and Intel) and on
+RTerm runs on **macOS 11 or later** (Apple Silicon and Intel), on
 **Linux** (x86_64 and ARM, glibc 2.35 or later: Ubuntu 22.04, Debian 12,
-Fedora 36 and newer). Downloads are in the
-[latest release](../../releases/latest).
+Fedora 36 and newer) and, as a first preview, on **Windows 10 and 11**
+(x86_64). Downloads are in the [latest release](../../releases/latest).
 
 ### macOS
 
@@ -144,6 +144,26 @@ Linux support is new: expect rough edges, and please report them.
 RTerm uses Wayland or X11 and needs Vulkan graphics drivers, which desktop
 distributions install by default.
 
+### Windows (preview)
+
+- **Installer**: run `RTerm-<version>-windows-x86_64-setup.exe`. It
+  installs RTerm for your account only (no administrator prompt), with a
+  Start menu entry and an uninstaller.
+- **Portable**: extract `RTerm-<version>-windows-x86_64.zip` anywhere (a USB
+  stick works) and run `RTerm.exe`; nothing is installed.
+
+RTerm is not signed with a paid certificate, so Windows may say it protected
+your PC: click **More info**, then **Run anyway**.
+
+RTerm opens your WSL distribution when one is installed (in your Linux home),
+otherwise PowerShell. On Windows, every shell runs as a classic terminal for
+now: no blocks and no input editor yet. To pick a shell:
+
+```toml
+[shell]
+program = "pwsh.exe"   # or "wsl.exe", "powershell.exe", "cmd.exe"
+```
+
 ### Updates (macOS)
 
 RTerm checks this repository's releases at launch and then once a day. When a
@@ -165,10 +185,10 @@ single-user Mac) to replace itself.
 
 ## Keyboard shortcuts
 
-On Linux, plain `Ctrl` shortcuts belong to the shell (`Ctrl+C`, `Ctrl+W`…),
-so RTerm uses `Ctrl+Shift` instead, like most Linux terminals.
+On Linux and Windows, plain `Ctrl` shortcuts belong to the shell (`Ctrl+C`,
+`Ctrl+W`…), so RTerm uses `Ctrl+Shift` instead, like most Linux terminals.
 
-| Action | macOS | Linux |
+| Action | macOS | Linux and Windows |
 | --- | --- | --- |
 | Command palette | `Cmd+Shift+P` or `Cmd+P` | `Ctrl+Shift+P` |
 | New window | `Cmd+N` | `Ctrl+Shift+N` |
@@ -249,14 +269,16 @@ Because RTerm draws its own input editor, your prompt and line-editing plugins
 are not displayed. Your aliases, functions, environment and history all work
 as usual.
 
-Other shells (fish, nushell…) run as a classic terminal for now. To get the
+Other shells (fish, nushell, and every shell on Windows for now) run as a
+classic terminal. To get the
 same classic behavior with zsh or bash, set `integration = false` in the
 `[shell]` section.
 
 ## Build from source
 
 You need a recent stable [Rust toolchain](https://rustup.rs). On macOS, add
-Xcode's command line tools; on Debian or Ubuntu, the libraries GPUI uses:
+Xcode's command line tools; on Windows, the Visual Studio C++ build tools; on
+Debian or Ubuntu, the libraries GPUI uses:
 
 ```bash
 sudo apt install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libvulkan-dev libssl-dev libzstd-dev
@@ -278,7 +300,9 @@ scripts/bundle-macos.sh
 
 Set `RTERM_ARCH=native` to build only for your machine's architecture, which
 is about twice as fast. On Linux, `scripts/bundle-linux.sh` produces the
-`.tar.gz` and the `.AppImage`.
+`.tar.gz` and the `.AppImage`; on Windows, `scripts/bundle-windows.ps1`
+produces the installer (with [Inno Setup](https://jrsoftware.org/isinfo.php))
+and the portable `.zip`.
 
 ## Releases
 
@@ -292,7 +316,8 @@ macOS, in the command palette everywhere) and printed by `rterm --version`.
 
 ## Known limitations
 
-- Blocks and the input editor require zsh or bash.
+- Blocks and the input editor require zsh or bash, on macOS or Linux.
+- Windows is a preview: classic terminal only, no automatic updates.
 - Linux: no automatic updates yet. RTerm asks the system to draw its title
   bar; desktops that leave that to applications (GNOME on Wayland) may show
   none.

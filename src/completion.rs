@@ -335,7 +335,8 @@ fn is_assignment(word: &str) -> bool {
 /// Names of the files found in the `PATH` directories.
 fn list_executables(path: &str) -> Vec<String> {
     let mut names = Vec::new();
-    for directory in path.split(':').filter(|directory| !directory.is_empty()) {
+    // ':' separates the directories on Unix, ';' on Windows.
+    for directory in std::env::split_paths(path).filter(|directory| !directory.as_os_str().is_empty()) {
         let Ok(entries) = std::fs::read_dir(directory) else {
             continue;
         };

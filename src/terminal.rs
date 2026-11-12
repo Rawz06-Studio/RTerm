@@ -6,15 +6,12 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
-use alacritty_terminal::event::{Event, EventListener, OnResize, WindowSize};
+use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{self, Term, TermMode};
@@ -26,6 +23,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use crate::block::{Block, LiveBlock};
 use crate::config::{Config, CursorShapeConfig};
 use crate::osc::{Mark, Scanner, Segment};
+use crate::pty_io::PtyIo;
 
 const ZSH_INTEGRATION: &str = include_str!("shell/zshenv.zsh");
 const BASH_INTEGRATION: &str = include_str!("shell/bashrc.bash");
@@ -284,7 +282,7 @@ impl Session {
 pub struct Terminal {
     pub session: Arc<FairMutex<Session>>,
     writer: Sender<Cow<'static, [u8]>>,
-    pty: tty::Pty,
+    io: PtyIo,
     size: GridSize,
 }
 
@@ -320,6 +318,15 @@ impl Terminal {
         ]);
         let mut shell = (!config.shell.program.is_empty())
             .then(|| tty::Shell::new(config.shell.program.clone(), config.shell.args.clone()));
+        // Windows: always name the shell, and start WSL in the Linux home
+        // rather than in the Windows one.
+        if cfg!(windows) && shell.is_none() {
+            let mut args = config.shell.args.clone();
+            if args.is_empty() && shell_program.eq_ignore_ascii_case("wsl.exe") {
+                args = vec!["--cd".to_owned(), "~".to_owned()];
+            }
+            shell = Some(tty::Shell::new(shell_program.clone(), args));
+        }
         // An integration that fails to install does not prevent working: the
         // terminal then stays in classic display.
         let kind = Path::new(&shell_program).file_name().and_then(|name| name.to_str()).unwrap_or_default();
@@ -361,14 +368,15 @@ impl Terminal {
                 Some(PathBuf::from(&config.shell.working_directory))
             }
         });
-        let options = tty::Options { shell, working_directory, drain_on_exit: true, env };
+        let options = tty::Options {
+            shell,
+            working_directory,
+            drain_on_exit: true,
+            env,
+            #[cfg(windows)]
+            escape_args: true,
+        };
         let pty = tty::new(&options, size.window_size(), 0).context("opening the PTY")?;
-
-        // alacritty opens the PTY in non-blocking mode, for its own loop.
-        // Our threads do blocking reads and writes.
-        let reader = pty.file().try_clone().context("duplicating the PTY")?;
-        let writer = pty.file().try_clone().context("duplicating the PTY")?;
-        set_blocking(&reader).context("switching the PTY to blocking mode")?;
 
         let session = Session {
             prompt: Term::new(term_config.clone(), &size, listener.clone()),
@@ -392,18 +400,13 @@ impl Terminal {
 
         let (chunks_tx, chunks_rx) = mpsc::sync_channel(64);
         let (writer_tx, writer_rx) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("pty-read".into())
-            .spawn(move || read_loop(reader, chunks_tx))?;
-        std::thread::Builder::new()
-            .name("pty-write".into())
-            .spawn(move || write_loop(writer, writer_rx))?;
+        let io = PtyIo::start(pty, chunks_tx, writer_rx)?;
         let parser_session = session.clone();
         std::thread::Builder::new()
             .name("pty-parse".into())
             .spawn(move || parse_loop(chunks_rx, parser_session, listener))?;
 
-        Ok((Terminal { session, writer: writer_tx, pty, size }, events_rx))
+        Ok((Terminal { session, writer: writer_tx, io, size }, events_rx))
     }
 
     /// Sends bytes to the shell, as if the user had typed them.
@@ -425,7 +428,7 @@ impl Terminal {
         }
         self.size = size;
         self.session.lock().resize(size);
-        self.pty.on_resize(size.window_size());
+        self.io.resize(size.window_size());
     }
 }
 
@@ -434,7 +437,40 @@ fn shell_program(config: &Config) -> String {
     if !config.shell.program.is_empty() {
         return config.shell.program.clone();
     }
+    #[cfg(windows)]
+    return windows_default_shell();
+    #[cfg(not(windows))]
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_owned())
+}
+
+/// WSL when a Linux distribution is installed, otherwise PowerShell (the
+/// newer `pwsh` if it is installed).
+#[cfg(windows)]
+fn windows_default_shell() -> String {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    // Without a console window flashing on the screen.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let quiet = |program: &str, args: &[&str]| {
+        Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+    };
+    // `wsl --list` answers in UTF-16: any letter means a distribution.
+    let has_distribution = quiet("wsl.exe", &["--list", "--quiet"])
+        .is_some_and(|output| output.stdout.iter().any(|byte| byte.is_ascii_alphanumeric()));
+    if has_distribution {
+        "wsl.exe".to_owned()
+    } else if quiet("pwsh.exe", &["-NoProfile", "-Command", "exit"]).is_some() {
+        "pwsh.exe".to_owned()
+    } else {
+        "powershell.exe".to_owned()
+    }
 }
 
 /// Writes an integration script to `~/.config/rterm/shell/<shell>/<file>`
@@ -452,56 +488,6 @@ fn install_integration(shell: &str, file: &str, content: &str) -> Result<PathBuf
         std::fs::write(&script, content).with_context(|| format!("writing {}", script.display()))?;
     }
     Ok(script)
-}
-
-fn set_blocking(file: &File) -> std::io::Result<()> {
-    let fd = file.as_raw_fd();
-    // SAFETY: `fd` is an open descriptor, owned by `file` for the duration of the call.
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL, 0);
-        if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
-/// Reads the PTY until the shell ends.
-fn read_loop(mut pty: File, chunks: SyncSender<Vec<u8>>) {
-    let mut buffer = vec![0u8; 64 * 1024];
-    loop {
-        match pty.read(&mut buffer) {
-            // End of file or error: the shell has exited.
-            Ok(0) => break,
-            Ok(read) => {
-                #[cfg(test)]
-                {
-                    tests::BYTES_READ.fetch_add(read, std::sync::atomic::Ordering::Relaxed);
-                    let mut first = tests::FIRST_BYTES.lock().unwrap();
-                    if first.len() < 600 {
-                        first.extend_from_slice(&buffer[..read.min(600)]);
-                    }
-                }
-                if chunks.send(buffer[..read].to_vec()).is_err() {
-                    break;
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::Interrupted => {}
-            Err(_error) => {
-                #[cfg(test)]
-                eprintln!("pty read error: {_error}");
-                break;
-            }
-        }
-    }
-}
-
-fn write_loop(mut pty: File, inputs: Receiver<Cow<'static, [u8]>>) {
-    for input in inputs {
-        if pty.write_all(&input).is_err() {
-            break;
-        }
-    }
 }
 
 /// Interprets the shell's output and distributes it among the blocks.
@@ -546,13 +532,23 @@ fn parse_loop(chunks: Receiver<Vec<u8>>, session: Arc<FairMutex<Session>>, liste
     listener.send_event(Event::Exit);
 }
 
-#[cfg(test)]
-mod tests {
+// These tests launch real zsh and bash shells.
+#[cfg(all(test, unix))]
+pub(crate) mod tests {
     use super::*;
 
     /// Bytes read from all PTYs, to tell a silent shell from a lost output.
-    pub static BYTES_READ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    pub static FIRST_BYTES: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+    static BYTES_READ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static FIRST_BYTES: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
+    /// Called by the PTY reader with each chunk it reads.
+    pub fn record_read(bytes: &[u8]) {
+        BYTES_READ.fetch_add(bytes.len(), std::sync::atomic::Ordering::Relaxed);
+        let mut first = FIRST_BYTES.lock().unwrap();
+        if first.len() < 600 {
+            first.extend_from_slice(&bytes[..bytes.len().min(600)]);
+        }
+    }
 
     /// Waits for a condition on the session to become true.
     fn wait_for(terminal: &Terminal, what: &str, condition: impl Fn(&Session) -> bool) {
@@ -562,7 +558,7 @@ mod tests {
                 // What the shell showed, to understand a failure in CI.
                 let session = terminal.session.lock();
                 let screen = Block::from_term(0, &session.prompt).text(None);
-                let pid = terminal.pty.child().id() as i32;
+                let pid = terminal.io.child_id() as i32;
                 // SAFETY: signal 0 only checks that the process exists.
                 let alive = unsafe { libc::kill(pid, 0) } == 0;
                 panic!(

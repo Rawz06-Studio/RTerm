@@ -1,3 +1,6 @@
+// On Windows, a graphical application: no console window opens with it.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod about;
 mod block;
 mod commands;
@@ -12,6 +15,7 @@ mod layout;
 mod osc;
 mod palette;
 mod platform;
+mod pty_io;
 mod scene;
 mod settings;
 mod terminal;

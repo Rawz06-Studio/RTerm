@@ -149,9 +149,46 @@ jobs:
             dist/RTerm-*.sha256
           if-no-files-found: error
 
+  windows:
+    name: Build and package (Windows)
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build and package
+        shell: pwsh
+        run: scripts/bundle-windows.ps1 $env:VERSION
+
+      - name: Check the packaged version
+        shell: pwsh
+        run: |
+          # A graphical program: its output only shows through a pipe.
+          $reported = (& target/release/rterm.exe --version | Out-String).Trim()
+          Write-Host $reported
+          if ($reported -ne "RTerm $env:VERSION") { exit 1 }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            dist/RTerm-*-setup.exe
+            dist/RTerm-*.zip
+            dist/RTerm-*.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish the release
-    needs: [version, macos, linux]
+    needs: [version, macos, linux, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8

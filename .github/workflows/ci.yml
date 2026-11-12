@@ -1,6 +1,6 @@
 name: CI
 
-# Checks pull requests on macOS and Linux. Pushes to the default branch are
+# Checks pull requests on macOS, Linux and Windows. Pushes to the default branch are
 # covered by the release workflow, which runs the same tests before publishing.
 on:
   pull_request:
@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-22.04]
+        os: [macos-latest, ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
