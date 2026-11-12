@@ -131,7 +131,11 @@ impl Updater {
     /// One line for the About window.
     pub fn summary(&self) -> String {
         match &self.status {
-            _ if !self.can_update() => "Only available in RTerm.app".into(),
+            _ if !self.can_update() => crate::platform::pick(
+                "Only available in RTerm.app",
+                "Download new versions from GitHub",
+            )
+            .into(),
             Status::Idle => "Not checked yet".into(),
             Status::Checking => "Checking…".into(),
             Status::UpToDate => "Up to date".into(),
@@ -384,6 +388,8 @@ mod tests {
     }
 
     /// Installs a fake release over a fake bundle, as the real update does.
+    /// Updates only exist for the macOS app (it needs `ditto`).
+    #[cfg(target_os = "macos")]
     #[test]
     fn install_swaps_the_bundle() {
         let root = std::env::temp_dir().join(format!("rterm-update-test-{}", std::process::id()));

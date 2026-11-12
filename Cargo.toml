@@ -23,6 +23,10 @@ toml = "1.2.1"
 toml_edit = "0.25.19"
 unicode-width = "0.2.3"
 
+[patch.crates-io]
+# See vendor/README.md.
+xattr = { path = "vendor/xattr" }
+
 [profile.release]
 # Distributed binary: smaller and a bit faster, at the cost of a longer
 # build.

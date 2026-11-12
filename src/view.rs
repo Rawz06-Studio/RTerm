@@ -326,7 +326,11 @@ impl TerminalView {
 
     fn font(&self) -> Font {
         Font {
-            family: self.config.font.family.clone().into(),
+            family: if self.config.font.family.is_empty() {
+                crate::platform::DEFAULT_FONT.into()
+            } else {
+                self.config.font.family.clone().into()
+            },
             features: if self.config.font.ligatures {
                 FontFeatures::default()
             } else {
@@ -399,7 +403,7 @@ impl TerminalView {
 
         let bracketed = {
             let mut session = self.terminal.session.lock();
-            session.pending_command = Some(command.clone());
+            session.submit(command.clone());
             session.prompt.mode().contains(TermMode::BRACKETED_PASTE)
         };
         // "Paste" mode makes zsh accept a multi-line command as a whole

@@ -11,6 +11,7 @@ mod keys;
 mod layout;
 mod osc;
 mod palette;
+mod platform;
 mod scene;
 mod settings;
 mod terminal;
@@ -26,6 +27,7 @@ use gpui::{
 };
 
 use crate::config::Config;
+use crate::platform::pick;
 use crate::view::{
     ClearBlocks, Copy, Cut, DecreaseFontSize, IncreaseFontSize, Paste, Redo, ResetFontSize,
     SelectAll, Undo,
@@ -71,46 +73,47 @@ fn main() {
         update::init(check_updates, cx);
         let terminal = Some("Terminal");
         let workspace = Some("Workspace");
+        // Each shortcut has a macOS and a Linux form (see `platform::pick`).
         cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-n", NewWindow, None),
+            KeyBinding::new(pick("cmd-q", "ctrl-shift-q"), Quit, None),
+            KeyBinding::new(pick("cmd-n", "ctrl-shift-n"), NewWindow, None),
             // Window: tabs, panes, palette.
-            KeyBinding::new("cmd-t", NewTab, workspace),
-            KeyBinding::new("cmd-w", ClosePane, workspace),
-            KeyBinding::new("ctrl-tab", NextTab, workspace),
-            KeyBinding::new("ctrl-shift-tab", PreviousTab, workspace),
-            KeyBinding::new("cmd-shift-]", NextTab, workspace),
-            KeyBinding::new("cmd-shift-[", PreviousTab, workspace),
-            KeyBinding::new("cmd-d", SplitRight, workspace),
-            KeyBinding::new("cmd-shift-d", SplitDown, workspace),
-            KeyBinding::new("cmd-]", FocusNextPane, workspace),
-            KeyBinding::new("cmd-[", FocusPreviousPane, workspace),
-            KeyBinding::new("cmd-alt-right", FocusNextPane, workspace),
-            KeyBinding::new("cmd-alt-left", FocusPreviousPane, workspace),
-            KeyBinding::new("cmd-shift-p", TogglePalette, workspace),
-            KeyBinding::new("cmd-p", TogglePalette, workspace),
-            KeyBinding::new("cmd-,", OpenSettings, None),
-            KeyBinding::new("cmd-1", ActivateTab1, workspace),
-            KeyBinding::new("cmd-2", ActivateTab2, workspace),
-            KeyBinding::new("cmd-3", ActivateTab3, workspace),
-            KeyBinding::new("cmd-4", ActivateTab4, workspace),
-            KeyBinding::new("cmd-5", ActivateTab5, workspace),
-            KeyBinding::new("cmd-6", ActivateTab6, workspace),
-            KeyBinding::new("cmd-7", ActivateTab7, workspace),
-            KeyBinding::new("cmd-8", ActivateTab8, workspace),
-            KeyBinding::new("cmd-9", ActivateTab9, workspace),
+            KeyBinding::new(pick("cmd-t", "ctrl-shift-t"), NewTab, workspace),
+            KeyBinding::new(pick("cmd-w", "ctrl-shift-w"), ClosePane, workspace),
+            KeyBinding::new(pick("ctrl-tab", "ctrl-tab"), NextTab, workspace),
+            KeyBinding::new(pick("ctrl-shift-tab", "ctrl-shift-tab"), PreviousTab, workspace),
+            KeyBinding::new(pick("cmd-shift-]", "ctrl-pagedown"), NextTab, workspace),
+            KeyBinding::new(pick("cmd-shift-[", "ctrl-pageup"), PreviousTab, workspace),
+            KeyBinding::new(pick("cmd-d", "ctrl-shift-d"), SplitRight, workspace),
+            KeyBinding::new(pick("cmd-shift-d", "ctrl-shift-e"), SplitDown, workspace),
+            KeyBinding::new(pick("cmd-]", "ctrl-shift-]"), FocusNextPane, workspace),
+            KeyBinding::new(pick("cmd-[", "ctrl-shift-["), FocusPreviousPane, workspace),
+            KeyBinding::new(pick("cmd-alt-right", "ctrl-alt-right"), FocusNextPane, workspace),
+            KeyBinding::new(pick("cmd-alt-left", "ctrl-alt-left"), FocusPreviousPane, workspace),
+            KeyBinding::new(pick("cmd-shift-p", "ctrl-shift-p"), TogglePalette, workspace),
+            KeyBinding::new(pick("cmd-p", "ctrl-shift-p"), TogglePalette, workspace),
+            KeyBinding::new(pick("cmd-,", "ctrl-,"), OpenSettings, None),
+            KeyBinding::new(pick("cmd-1", "alt-1"), ActivateTab1, workspace),
+            KeyBinding::new(pick("cmd-2", "alt-2"), ActivateTab2, workspace),
+            KeyBinding::new(pick("cmd-3", "alt-3"), ActivateTab3, workspace),
+            KeyBinding::new(pick("cmd-4", "alt-4"), ActivateTab4, workspace),
+            KeyBinding::new(pick("cmd-5", "alt-5"), ActivateTab5, workspace),
+            KeyBinding::new(pick("cmd-6", "alt-6"), ActivateTab6, workspace),
+            KeyBinding::new(pick("cmd-7", "alt-7"), ActivateTab7, workspace),
+            KeyBinding::new(pick("cmd-8", "alt-8"), ActivateTab8, workspace),
+            KeyBinding::new(pick("cmd-9", "alt-9"), ActivateTab9, workspace),
             // Terminal pane.
-            KeyBinding::new("cmd-c", Copy, terminal),
-            KeyBinding::new("cmd-v", Paste, terminal),
-            KeyBinding::new("cmd-x", Cut, terminal),
-            KeyBinding::new("cmd-a", SelectAll, terminal),
-            KeyBinding::new("cmd-z", Undo, terminal),
-            KeyBinding::new("cmd-shift-z", Redo, terminal),
-            KeyBinding::new("cmd-k", ClearBlocks, terminal),
-            KeyBinding::new("cmd-=", IncreaseFontSize, terminal),
-            KeyBinding::new("cmd-+", IncreaseFontSize, terminal),
-            KeyBinding::new("cmd--", DecreaseFontSize, terminal),
-            KeyBinding::new("cmd-0", ResetFontSize, terminal),
+            KeyBinding::new(pick("cmd-c", "ctrl-shift-c"), Copy, terminal),
+            KeyBinding::new(pick("cmd-v", "ctrl-shift-v"), Paste, terminal),
+            KeyBinding::new(pick("cmd-x", "ctrl-shift-x"), Cut, terminal),
+            KeyBinding::new(pick("cmd-a", "ctrl-shift-a"), SelectAll, terminal),
+            KeyBinding::new(pick("cmd-z", "ctrl-shift-z"), Undo, terminal),
+            KeyBinding::new(pick("cmd-shift-z", "ctrl-shift-y"), Redo, terminal),
+            KeyBinding::new(pick("cmd-k", "ctrl-shift-k"), ClearBlocks, terminal),
+            KeyBinding::new(pick("cmd-=", "ctrl-="), IncreaseFontSize, terminal),
+            KeyBinding::new(pick("cmd-+", "ctrl-+"), IncreaseFontSize, terminal),
+            KeyBinding::new(pick("cmd--", "ctrl--"), DecreaseFontSize, terminal),
+            KeyBinding::new(pick("cmd-0", "ctrl-0"), ResetFontSize, terminal),
         ]);
         cx.set_menus(vec![
             Menu {
@@ -188,10 +191,12 @@ fn open_window(config_error: Option<String>, cx: &mut App) {
     );
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        // On macOS, the tabs share the title bar with the window buttons. On
+        // Linux, the system draws its own title bar above them.
         titlebar: Some(TitlebarOptions {
             title: Some("RTerm".into()),
-            appears_transparent: true,
-            traffic_light_position: Some(point(px(13.), px(12.))),
+            appears_transparent: platform::IS_MAC,
+            traffic_light_position: platform::IS_MAC.then(|| point(px(13.), px(12.))),
         }),
         window_min_size: Some(size(px(320.), px(200.))),
         ..Default::default()

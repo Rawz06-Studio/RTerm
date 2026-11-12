@@ -57,8 +57,8 @@ impl Global for GlobalSettings {}
 pub fn init(config: Config, cx: &mut App) {
     let settings = cx.new(|_| Settings { config: Rc::new(config), error: None });
     cx.set_global(GlobalSettings { settings, window: None });
-    // Cmd+W closes the small windows (Settings, About).
-    cx.bind_keys([KeyBinding::new("cmd-w", ClosePanel, Some("Panel"))]);
+    // Cmd+W (Ctrl+Shift+W on Linux) closes the small windows.
+    cx.bind_keys([KeyBinding::new(crate::platform::pick("cmd-w", "ctrl-shift-w"), ClosePanel, Some("Panel"))]);
 }
 
 pub fn global(cx: &App) -> Entity<Settings> {
@@ -186,12 +186,7 @@ pub fn wanted_theme(config: &Config, dark: bool) -> String {
 pub fn open_config_file() -> anyhow::Result<()> {
     use anyhow::Context as _;
     let path = Config::path().context("home directory not found")?;
-    std::process::Command::new("open")
-        .arg("-t")
-        .arg(&path)
-        .spawn()
-        .with_context(|| format!("Failed to open {}", path.display()))?;
-    Ok(())
+    crate::platform::open(&path, true).with_context(|| format!("Failed to open {}", path.display()))
 }
 
 /// Opens a small window (Settings, About), centered on the screen.

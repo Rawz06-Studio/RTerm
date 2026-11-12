@@ -77,9 +77,17 @@ impl Block {
     pub fn freeze(live: LiveBlock, exit: Option<i32>) -> Block {
         let mut lines = snapshot(&live.term);
         if !live.executing {
-            // Without execution, the output starts with the prompt's line feed.
+            // Without execution, the output starts with the prompt's line
+            // feed, and with some shells (bash) the echo of the command.
             let blank = lines.iter().take_while(|line| line.is_empty()).count();
             lines.drain(..blank);
+            let echo = live
+                .command
+                .lines()
+                .zip(&lines)
+                .take_while(|(command, line)| line_text(line).trim_end() == command.trim_end())
+                .count();
+            lines.drain(..echo);
         }
         Block {
             id: live.id,
@@ -234,4 +242,8 @@ fn collect_text(
         }
     }
     text
+}
+
+fn line_text(line: &[Cell]) -> String {
+    line.iter().map(|cell| cell.c).collect()
 }

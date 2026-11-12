@@ -4,8 +4,8 @@ name: Release
 # latest v* tag with its patch number incremented. Run the workflow manually
 # to bump the minor or major number instead.
 #
-# The version lives in git tags only: nothing is committed back. The build
-# receives it through RTERM_VERSION, which is what the app shows in its About
+# The version lives in git tags only: nothing is committed back. The builds
+# receive it through RTERM_VERSION, which is what the app shows in its About
 # window and what `rterm --version` prints.
 on:
   push:
@@ -31,17 +31,18 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build, package and publish (macOS)
-    runs-on: macos-latest
+  version:
+    name: Compute the next version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
         with:
           # The full history and tags are needed to find the latest version.
           fetch-depth: 0
 
-      - name: Compute the next version
-        id: version
+      - id: version
         env:
           BUMP: ${{ inputs.bump || 'patch' }}
         run: |
@@ -61,6 +62,15 @@ jobs:
           echo "Previous: ${latest:-none} -> next: v$next"
           echo "version=$next" >> "$GITHUB_OUTPUT"
 
+  macos:
+    name: Build and package (macOS)
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -71,21 +81,93 @@ jobs:
         run: cargo test --locked
 
       - name: Build, sign and package RTerm.app
-        run: scripts/bundle-macos.sh "${{ steps.version.outputs.version }}"
+        run: scripts/bundle-macos.sh "$VERSION"
 
       - name: Check the packaged version
         run: |
           reported="$(dist/RTerm.app/Contents/MacOS/rterm --version)"
           echo "$reported"
-          test "$reported" = "RTerm ${{ steps.version.outputs.version }}"
+          test "$reported" = "RTerm $VERSION"
 
-      - name: Publish the release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: |
+            dist/RTerm-*.dmg
+            dist/RTerm-*.zip
+            dist/RTerm-*.sha256
+          if-no-files-found: error
+
+  linux:
+    name: Build and package (Linux ${{ matrix.arch }})
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    # The oldest supported runners: the binary then runs on any distribution
+    # with this glibc or a newer one.
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the libraries GPUI needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev \
+            libx11-xcb-dev libfontconfig-dev libfreetype-dev libvulkan-dev \
+            libssl-dev libzstd-dev zsh file
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build and package (tar.gz and AppImage)
+        run: scripts/bundle-linux.sh "$VERSION"
+
+      - name: Check the packaged version
+        run: |
+          reported="$(./dist/RTerm-*.AppImage --appimage-extract-and-run --version)"
+          echo "$reported"
+          test "$reported" = "RTerm $VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/RTerm-*.tar.gz
+            dist/RTerm-*.AppImage
+            dist/RTerm-*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [version, macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
+          ls -l dist
           gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "RTerm $VERSION" \
             --generate-notes \
-            dist/RTerm-*.dmg dist/RTerm-*.zip dist/RTerm-*.sha256
+            dist/*

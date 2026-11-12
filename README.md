@@ -97,13 +97,17 @@ one. Add your own as `~/.config/rterm/themes/<name>.toml`.
 
 ## Install
 
-RTerm currently runs on **macOS 11 or later**, on Apple Silicon and Intel.
+RTerm runs on **macOS 11 or later** (Apple Silicon and Intel) and on
+**Linux** (x86_64 and ARM, glibc 2.35 or later: Ubuntu 22.04, Debian 12,
+Fedora 36 and newer). Downloads are in the
+[latest release](../../releases/latest).
 
-1. Download `RTerm-<version>-macos-universal.dmg` from the
-   [latest release](../../releases/latest).
+### macOS
+
+1. Download `RTerm-<version>-macos-universal.dmg`.
 2. Open it and drag **RTerm** into **Applications**.
 
-### First launch
+#### First launch
 
 RTerm is signed, but not with a paid Apple Developer ID and it is not
 notarized, so macOS asks for confirmation the first time:
@@ -123,7 +127,24 @@ xattr -dr com.apple.quarantine /Applications/RTerm.app
 You only need to do this once: later versions install themselves (see
 [Updates](#updates)) and do not ask again.
 
-### Updates
+### Linux
+
+Linux support is new: expect rough edges, and please report them.
+
+- **AppImage**: download `RTerm-<version>-linux-<arch>.AppImage`, make it
+  executable (`chmod +x`) and run it.
+- **Archive**: extract `RTerm-<version>-linux-<arch>.tar.gz` into `~/.local`
+  (or `/usr/local`) to get `rterm` in your `PATH` and RTerm in your
+  application menu:
+
+  ```bash
+  tar -xzf RTerm-*-linux-*.tar.gz --strip-components=1 -C ~/.local
+  ```
+
+RTerm uses Wayland or X11 and needs Vulkan graphics drivers, which desktop
+distributions install by default.
+
+### Updates (macOS)
 
 RTerm checks this repository's releases at launch and then once a day. When a
 new version is out, an **Update to …** button appears in the tab bar: click it
@@ -144,26 +165,30 @@ single-user Mac) to replace itself.
 
 ## Keyboard shortcuts
 
-| Action | Shortcut |
-| --- | --- |
-| Command palette | `Cmd+Shift+P` or `Cmd+P` |
-| New window | `Cmd+N` |
-| New tab | `Cmd+T` |
-| Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Go to tab 1–9 | `Cmd+1` … `Cmd+9` |
-| Split right / down | `Cmd+D` / `Cmd+Shift+D` |
-| Next / previous pane | `Cmd+Option+→` / `Cmd+Option+←` |
-| Close pane | `Cmd+W` |
-| Complete | `Tab` |
-| Search history | `Ctrl+R` |
-| New line in the editor | `Shift+Enter` |
-| Clear blocks | `Cmd+K` |
-| Font size | `Cmd+=` / `Cmd+-` / `Cmd+0` |
-| Settings | `Cmd+,` |
+On Linux, plain `Ctrl` shortcuts belong to the shell (`Ctrl+C`, `Ctrl+W`…),
+so RTerm uses `Ctrl+Shift` instead, like most Linux terminals.
+
+| Action | macOS | Linux |
+| --- | --- | --- |
+| Command palette | `Cmd+Shift+P` or `Cmd+P` | `Ctrl+Shift+P` |
+| New window | `Cmd+N` | `Ctrl+Shift+N` |
+| New tab | `Cmd+T` | `Ctrl+Shift+T` |
+| Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | same, or `Ctrl+PgDn` / `Ctrl+PgUp` |
+| Go to tab 1–9 | `Cmd+1` … `Cmd+9` | `Alt+1` … `Alt+9` |
+| Split right / down | `Cmd+D` / `Cmd+Shift+D` | `Ctrl+Shift+D` / `Ctrl+Shift+E` |
+| Next / previous pane | `Cmd+Option+→` / `Cmd+Option+←` | `Ctrl+Alt+→` / `Ctrl+Alt+←` |
+| Close pane | `Cmd+W` | `Ctrl+Shift+W` |
+| Copy / paste | `Cmd+C` / `Cmd+V` | `Ctrl+Shift+C` / `Ctrl+Shift+V` |
+| Complete | `Tab` | `Tab` |
+| Search history | `Ctrl+R` | `Ctrl+R` |
+| New line in the editor | `Shift+Enter` | `Shift+Enter` |
+| Clear blocks | `Cmd+K` | `Ctrl+Shift+K` |
+| Font size | `Cmd+=` / `Cmd+-` / `Cmd+0` | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| Settings | `Cmd+,` | `Ctrl+,` |
 
 The editor also understands the usual readline keys (`Ctrl+A`, `Ctrl+E`,
-`Ctrl+K`, `Ctrl+U`, `Ctrl+W`) and macOS text shortcuts (`Option+←/→`,
-`Cmd+←/→`, `Cmd+Backspace`).
+`Ctrl+K`, `Ctrl+U`, `Ctrl+W`) and, on macOS, the system text shortcuts
+(`Option+←/→`, `Cmd+←/→`, `Cmd+Backspace`).
 
 ## Configuration
 
@@ -206,21 +231,38 @@ record = false   # do not keep the local history database
 
 ## Shell integration
 
-Blocks and the input editor rely on a small zsh integration that RTerm loads
-automatically: it tells RTerm when each command starts and ends. It lives in
-`~/.config/rterm/shell/` and never modifies your own dotfiles.
+Blocks and the input editor rely on a small integration for **zsh** and
+**bash** (3.2, the one macOS ships, and later) that RTerm loads automatically:
+it tells RTerm when each command starts and ends. It lives in
+`~/.config/rterm/shell/`, loads your usual configuration first (`.zshrc`,
+`.bashrc`, `.bash_profile`…) and never modifies your dotfiles.
 
-Because RTerm draws its own input editor, your zsh prompt and zle plugins
-(prompt themes, `zsh-syntax-highlighting`, `zsh-autosuggestions`) are not
-displayed. Your aliases, functions, environment and history all work as usual.
+RTerm uses your login shell (`$SHELL`); to pick another one:
 
-Other shells (bash, fish) run as a classic terminal for now. To get the same
-classic behavior with zsh, set `integration = false` in the `[shell]` section.
+```toml
+[shell]
+program = "/bin/bash"
+```
+
+Because RTerm draws its own input editor, your prompt and line-editing plugins
+(prompt themes, `zsh-syntax-highlighting`, `zsh-autosuggestions`, `ble.sh`)
+are not displayed. Your aliases, functions, environment and history all work
+as usual.
+
+Other shells (fish, nushell…) run as a classic terminal for now. To get the
+same classic behavior with zsh or bash, set `integration = false` in the
+`[shell]` section.
 
 ## Build from source
 
-You need a recent stable [Rust toolchain](https://rustup.rs) and Xcode's
-command line tools.
+You need a recent stable [Rust toolchain](https://rustup.rs). On macOS, add
+Xcode's command line tools; on Debian or Ubuntu, the libraries GPUI uses:
+
+```bash
+sudo apt install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libvulkan-dev libssl-dev libzstd-dev
+```
+
+Then:
 
 ```bash
 git clone https://github.com/Rawz06-Studio/RTerm.git
@@ -235,7 +277,8 @@ scripts/bundle-macos.sh
 ```
 
 Set `RTERM_ARCH=native` to build only for your machine's architecture, which
-is about twice as fast.
+is about twice as fast. On Linux, `scripts/bundle-linux.sh` produces the
+`.tar.gz` and the `.AppImage`.
 
 ## Releases
 
@@ -244,16 +287,15 @@ with its patch number incremented (`v0.1.0`, `v0.1.1`, …). To bump the minor o
 major number, run the **Release** workflow manually and pick the part to
 increment.
 
-The version of a build is shown in **RTerm → About RTerm** and printed by:
-
-```bash
-/Applications/RTerm.app/Contents/MacOS/rterm --version
-```
+The version of a build is shown in **About RTerm** (in the RTerm menu on
+macOS, in the command palette everywhere) and printed by `rterm --version`.
 
 ## Known limitations
 
-- macOS only.
-- Blocks and the input editor require zsh.
+- Blocks and the input editor require zsh or bash.
+- Linux: no automatic updates yet. RTerm asks the system to draw its title
+  bar; desktops that leave that to applications (GNOME on Wayland) may show
+  none.
 - Mouse clicks are not forwarded to terminal programs yet.
 - Split panes always share the space equally.
 

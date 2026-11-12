@@ -15,6 +15,7 @@ use crate::config::{Config, TabsLayout, ThemeMode};
 use crate::history::HistoryStore;
 use crate::layout::Node;
 use crate::palette::{Palette, hsla, mix};
+use crate::platform::{self, pick};
 use crate::settings::{self, Setting, Settings, is_dark, wanted_theme};
 use crate::themes;
 use crate::update::{self, CheckForUpdates, InstallUpdate, RestartToUpdate, Status, Updater};
@@ -58,8 +59,6 @@ actions!(
 
 /// Height of the tab bar, which doubles as the title bar.
 const TAB_BAR_HEIGHT: f32 = 38.0;
-/// Room left for the macOS window buttons, to the left of the tabs.
-const TRAFFIC_LIGHTS_WIDTH: f32 = 78.0;
 /// Widths of a horizontal tab: they share the bar between these bounds.
 const TAB_MIN_WIDTH: f32 = 72.0;
 const TAB_MAX_WIDTH: f32 = 280.0;
@@ -484,7 +483,7 @@ impl Workspace {
         let Some(directory) = workflows::directory() else {
             return;
         };
-        if let Err(error) = std::process::Command::new("open").arg(&directory).spawn() {
+        if let Err(error) = platform::open(&directory, false) {
             self.error = Some(format!("Failed to open {}: {error}", directory.display()).into());
             cx.notify();
         }
@@ -507,20 +506,20 @@ impl Workspace {
             run: Run::Action(action),
         };
         let mut commands = vec![
-            action("New Tab", "⌘T", Box::new(NewTab)),
-            action("Split Right", "⌘D", Box::new(SplitRight)),
-            action("Split Down", "⇧⌘D", Box::new(SplitDown)),
-            action("Close Pane", "⌘W", Box::new(ClosePane)),
-            action("Next Tab", "⌃⇥", Box::new(NextTab)),
-            action("Previous Tab", "⌃⇧⇥", Box::new(PreviousTab)),
-            action("Next Pane", "⌘]", Box::new(FocusNextPane)),
-            action("Previous Pane", "⌘[", Box::new(FocusPreviousPane)),
-            action("Clear Blocks", "⌘K", Box::new(ClearBlocks)),
-            action("Copy", "⌘C", Box::new(Copy)),
-            action("Paste", "⌘V", Box::new(Paste)),
-            action("Increase Font Size", "⌘+", Box::new(IncreaseFontSize)),
-            action("Decrease Font Size", "⌘-", Box::new(DecreaseFontSize)),
-            action("Reset Font Size", "⌘0", Box::new(ResetFontSize)),
+            action("New Tab", pick("⌘T", "Ctrl+Shift+T"), Box::new(NewTab)),
+            action("Split Right", pick("⌘D", "Ctrl+Shift+D"), Box::new(SplitRight)),
+            action("Split Down", pick("⇧⌘D", "Ctrl+Shift+E"), Box::new(SplitDown)),
+            action("Close Pane", pick("⌘W", "Ctrl+Shift+W"), Box::new(ClosePane)),
+            action("Next Tab", pick("⌃⇥", "Ctrl+Tab"), Box::new(NextTab)),
+            action("Previous Tab", pick("⌃⇧⇥", "Ctrl+Shift+Tab"), Box::new(PreviousTab)),
+            action("Next Pane", pick("⌘]", "Ctrl+Shift+]"), Box::new(FocusNextPane)),
+            action("Previous Pane", pick("⌘[", "Ctrl+Shift+["), Box::new(FocusPreviousPane)),
+            action("Clear Blocks", pick("⌘K", "Ctrl+Shift+K"), Box::new(ClearBlocks)),
+            action("Copy", pick("⌘C", "Ctrl+Shift+C"), Box::new(Copy)),
+            action("Paste", pick("⌘V", "Ctrl+Shift+V"), Box::new(Paste)),
+            action("Increase Font Size", pick("⌘+", "Ctrl++"), Box::new(IncreaseFontSize)),
+            action("Decrease Font Size", pick("⌘-", "Ctrl+-"), Box::new(DecreaseFontSize)),
+            action("Reset Font Size", pick("⌘0", "Ctrl+0"), Box::new(ResetFontSize)),
             action(
                 match self.tabs_layout {
                     TabsLayout::Horizontal => "Use Vertical Tabs (left column)",
@@ -529,13 +528,13 @@ impl Workspace {
                 "",
                 Box::new(ToggleTabsLayout),
             ),
-            action("Settings", "⌘,", Box::new(OpenSettings)),
+            action("Settings", pick("⌘,", "Ctrl+,"), Box::new(OpenSettings)),
             action("Open Settings File", "", Box::new(OpenConfig)),
             action("Open Workflows Folder", "", Box::new(OpenWorkflows)),
             action("About RTerm", "", Box::new(About)),
-            action("New Window", "⌘N", Box::new(NewWindow)),
+            action("New Window", pick("⌘N", "Ctrl+Shift+N"), Box::new(NewWindow)),
             action("Check for Updates", "", Box::new(CheckForUpdates)),
-            action("Quit RTerm", "⌘Q", Box::new(Quit)),
+            action("Quit RTerm", pick("⌘Q", "Ctrl+Shift+Q"), Box::new(Quit)),
         ];
         match &self.updater.read(cx).status {
             Status::Available(release) => commands.push(action(
@@ -746,7 +745,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap_1()
-            .pl(px(TRAFFIC_LIGHTS_WIDTH))
+            .pl(px(platform::WINDOW_BUTTONS_WIDTH))
             .pr_2()
             .children(tabs)
             .child(self.render_new_tab_button("+", cx))

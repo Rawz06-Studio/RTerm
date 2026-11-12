@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RTerm
+GenericName=Terminal
+Comment=A modern terminal that stays on your machine
+Exec=rterm
+Icon=rterm
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;command;prompt;
+StartupWMClass=rterm

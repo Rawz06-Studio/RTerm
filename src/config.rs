@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn default_config_parses() {
         let config = Config::defaults();
-        assert_eq!(config.font.family, "Menlo");
+        assert_eq!(config.font.family, "");
         assert_eq!(config.appearance.theme, crate::themes::DEFAULT_THEME);
         assert!(config.colors.is_empty());
     }
@@ -298,7 +298,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.font.size, 16.0);
-        assert_eq!(config.font.family, "Menlo");
+        assert_eq!(config.font.family, "");
         assert_eq!(config.appearance.theme, crate::themes::DEFAULT_THEME);
         assert!(config.colors.contains_key("normal"));
     }

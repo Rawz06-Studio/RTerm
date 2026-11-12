@@ -4,7 +4,8 @@
 # so you can keep only what you change.
 
 [font]
-family = "Menlo"
+# Empty: Menlo on macOS, DejaVu Sans Mono on Linux.
+family = ""
 size = 13.0
 # Line height, as a multiple of the font size.
 line_height = 1.35

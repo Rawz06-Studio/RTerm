@@ -1,9 +1,10 @@
 name: CI
 
-# Checks pull requests. Pushes to the default branch are covered by the
-# release workflow, which runs the same tests before publishing.
+# Checks pull requests on macOS and Linux. Pushes to the default branch are
+# covered by the release workflow, which runs the same tests before publishing.
 on:
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -11,10 +12,23 @@ concurrency:
 
 jobs:
   test:
-    name: Build and test (macOS)
-    runs-on: macos-latest
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Install the libraries GPUI needs
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev \
+            libx11-xcb-dev libfontconfig-dev libfreetype-dev libvulkan-dev \
+            libssl-dev libzstd-dev zsh
 
       - uses: dtolnay/rust-toolchain@stable
 

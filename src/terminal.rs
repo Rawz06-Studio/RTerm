@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::time::{Duration, Instant};
@@ -28,6 +28,7 @@ use crate::config::{Config, CursorShapeConfig};
 use crate::osc::{Mark, Scanner, Segment};
 
 const ZSH_INTEGRATION: &str = include_str!("shell/zshenv.zsh");
+const BASH_INTEGRATION: &str = include_str!("shell/bashrc.bash");
 
 /// Number of finished blocks kept in memory.
 const MAX_BLOCKS: usize = 1000;
@@ -104,6 +105,9 @@ pub struct Session {
     pub live: Option<LiveBlock>,
     /// True once the shell has reported a first prompt.
     pub integrated: bool,
+    /// Whether the shell reports the moment a line is accepted (zsh). Bash
+    /// does not: RTerm then opens the block itself when it sends a command.
+    reports_line_finish: bool,
     pub cwd: Option<PathBuf>,
     /// The command sent by the editor, waiting to be picked up.
     pub pending_command: Option<String>,
@@ -161,6 +165,17 @@ impl Session {
         self.prompt.resize(size);
         if let Some(live) = &mut self.live {
             live.term.resize(size);
+        }
+    }
+
+    /// Sends a command typed in the editor: it is shown as soon as the
+    /// shell starts it.
+    pub fn submit(&mut self, command: String) {
+        self.pending_command = Some(command);
+        if !self.reports_line_finish && self.live.is_none() {
+            // What the shell prints before running the command (its echo, a
+            // syntax error) goes to this block.
+            self.start_block(false);
         }
     }
 
@@ -238,6 +253,7 @@ impl Session {
                     .advance(&mut self.prompt, b"\x1b[H\x1b[2J\x1b[3J");
             }
             Mark::LineFinish => {
+                self.reports_line_finish = true;
                 if self.live.is_none() {
                     self.start_block(false);
                 }
@@ -302,22 +318,42 @@ impl Terminal {
             ("TERM_PROGRAM".to_owned(), "RTerm".to_owned()),
             ("TERM_PROGRAM_VERSION".to_owned(), crate::VERSION.to_owned()),
         ]);
-        if config.shell.integration && shell_program.ends_with("zsh") {
-            // An integration that fails to install does not prevent working:
-            // the terminal then stays in classic display.
-            match install_zsh_integration() {
-                Ok(directory) => {
+        let mut shell = (!config.shell.program.is_empty())
+            .then(|| tty::Shell::new(config.shell.program.clone(), config.shell.args.clone()));
+        // An integration that fails to install does not prevent working: the
+        // terminal then stays in classic display.
+        let kind = Path::new(&shell_program).file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        match kind {
+            "zsh" if config.shell.integration => match install_integration("zsh", ".zshenv", ZSH_INTEGRATION) {
+                Ok(script) => {
                     if let Ok(original) = std::env::var("ZDOTDIR") {
                         env.insert("RTERM_ORIG_ZDOTDIR".to_owned(), original);
                     }
+                    let directory = script.parent().unwrap_or(&script);
                     env.insert("ZDOTDIR".to_owned(), directory.to_string_lossy().into_owned());
                 }
                 Err(error) => eprintln!("rterm: zsh integration unavailable ({error:#})"),
-            }
+            },
+            "bash" if config.shell.integration => match install_integration("bash", "rterm.bash", BASH_INTEGRATION) {
+                Ok(script) => {
+                    // `--rcfile` only applies to non-login shells: the script
+                    // reads the login files itself where terminals start
+                    // login shells (macOS).
+                    if cfg!(target_os = "macos") {
+                        env.insert("RTERM_BASH_LOGIN".to_owned(), "1".to_owned());
+                        // You picked bash: macOS's advice to switch to zsh
+                        // would only clutter the first block.
+                        env.insert("BASH_SILENCE_DEPRECATION_WARNING".to_owned(), "1".to_owned());
+                    }
+                    let mut args = vec!["--rcfile".to_owned(), script.to_string_lossy().into_owned()];
+                    args.extend(config.shell.args.iter().cloned());
+                    args.push("-i".to_owned());
+                    shell = Some(tty::Shell::new(shell_program.clone(), args));
+                }
+                Err(error) => eprintln!("rterm: bash integration unavailable ({error:#})"),
+            },
+            _ => {}
         }
-
-        let shell = (!config.shell.program.is_empty())
-            .then(|| tty::Shell::new(config.shell.program.clone(), config.shell.args.clone()));
         let working_directory = cwd.filter(|cwd| cwd.is_dir()).or_else(|| {
             if config.shell.working_directory.is_empty() {
                 dirs::home_dir()
@@ -339,6 +375,7 @@ impl Terminal {
             blocks: Vec::new(),
             live: None,
             integrated: false,
+            reports_line_finish: false,
             cwd: None,
             pending_command: None,
             at_prompt: false,
@@ -400,20 +437,21 @@ fn shell_program(config: &Config) -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_owned())
 }
 
-/// Writes the integration script to `~/.config/rterm/shell/zsh/.zshenv`.
-fn install_zsh_integration() -> Result<PathBuf> {
+/// Writes an integration script to `~/.config/rterm/shell/<shell>/<file>`
+/// and returns its path.
+fn install_integration(shell: &str, file: &str, content: &str) -> Result<PathBuf> {
     let directory = dirs::home_dir()
         .context("home directory not found")?
-        .join(".config/rterm/shell/zsh");
+        .join(".config/rterm/shell")
+        .join(shell);
     std::fs::create_dir_all(&directory)
         .with_context(|| format!("creating {}", directory.display()))?;
-    let script = directory.join(".zshenv");
-    let up_to_date = std::fs::read_to_string(&script).is_ok_and(|current| current == ZSH_INTEGRATION);
+    let script = directory.join(file);
+    let up_to_date = std::fs::read_to_string(&script).is_ok_and(|current| current == content);
     if !up_to_date {
-        std::fs::write(&script, ZSH_INTEGRATION)
-            .with_context(|| format!("writing {}", script.display()))?;
+        std::fs::write(&script, content).with_context(|| format!("writing {}", script.display()))?;
     }
-    Ok(directory)
+    Ok(script)
 }
 
 fn set_blocking(file: &File) -> std::io::Result<()> {
@@ -512,7 +550,7 @@ mod tests {
     /// Sends a command the way the editor does, then waits for its block.
     fn run(terminal: &Terminal, command: &str) {
         let before = terminal.session.lock().blocks.len();
-        terminal.session.lock().pending_command = Some(command.to_owned());
+        terminal.session.lock().submit(command.to_owned());
         terminal.write(format!("{command}\r").into_bytes());
         wait_for(terminal, command, |session| {
             session.blocks.len() > before && session.mode() == Mode::Editing
@@ -526,45 +564,60 @@ mod tests {
         (block.command.clone(), block.text(None), block.exit)
     }
 
-    /// Launches a real zsh and checks that its commands become blocks.
+    /// Runs the same scenario in a real zsh and a real bash: their commands
+    /// must become blocks. One test for both, run one after the other,
+    /// because the zsh part changes an environment variable.
     #[test]
-    fn zsh_commands_become_blocks() {
-        if !std::path::Path::new("/bin/zsh").exists() {
-            return;
+    fn shell_commands_become_blocks() {
+        if Path::new("/bin/zsh").exists() {
+            // An empty ZDOTDIR sets the machine's zsh configuration aside: the
+            // test only depends on zsh and the integration script.
+            let zdotdir = std::env::temp_dir().join(format!("rterm-test-{}", std::process::id()));
+            std::fs::create_dir_all(&zdotdir).unwrap();
+            // SAFETY: this test is the only one reading or modifying the environment.
+            unsafe { std::env::set_var("ZDOTDIR", &zdotdir) };
+            check_shell("/bin/zsh", &["-i"], "parse error");
+            let _ = std::fs::remove_dir_all(&zdotdir);
         }
-        // An empty ZDOTDIR sets the machine's zsh configuration aside: the test
-        // only depends on zsh and the integration script.
-        let zdotdir = std::env::temp_dir().join(format!("rterm-test-{}", std::process::id()));
-        std::fs::create_dir_all(&zdotdir).unwrap();
-        // SAFETY: this test is the only one reading or modifying the environment.
-        unsafe { std::env::set_var("ZDOTDIR", &zdotdir) };
+        for bash in ["/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash", "/usr/local/bin/bash"] {
+            if Path::new(bash).exists() {
+                check_shell(bash, &[], "syntax error");
+            }
+        }
+    }
 
+    fn check_shell(program: &str, args: &[&str], syntax_error: &str) {
         let mut config = Config::defaults();
-        config.shell.program = "/bin/zsh".into();
-        config.shell.args = vec!["-i".into()];
+        config.shell.program = program.into();
+        config.shell.args = args.iter().map(|arg| arg.to_string()).collect();
         let size = GridSize { columns: 80, lines: 24, cell_width: 8.0, cell_height: 16.0 };
         let (terminal, _events) = Terminal::spawn(&config, size, None).unwrap();
 
         wait_for(&terminal, "first prompt", |session| session.mode() == Mode::Editing);
-        assert!(terminal.session.lock().cwd.is_some(), "the current directory is reported");
-        assert!(terminal.session.lock().path.is_some(), "the PATH is reported");
+        assert!(terminal.session.lock().cwd.is_some(), "{program}: the current directory is reported");
+        assert!(terminal.session.lock().path.is_some(), "{program}: the PATH is reported");
         let known = terminal.session.lock().shell_commands.clone().expect("shell commands are reported");
-        assert!(known.contains("cd") && known.contains("if"), "builtins and reserved words");
+        assert!(known.contains("cd") && known.contains("if"), "{program}: builtins and reserved words");
 
         run(&terminal, "echo hello-rterm");
         assert_eq!(
             last_block(&terminal),
-            ("echo hello-rterm".into(), "hello-rterm".into(), Some(0))
+            ("echo hello-rterm".into(), "hello-rterm".into(), Some(0)),
+            "{program}"
         );
 
         // Output without a trailing line feed, over several lines.
         run(&terminal, "printf 'a\\nb'");
-        assert_eq!(last_block(&terminal).1, "a\nb");
+        assert_eq!(last_block(&terminal).1, "a\nb", "{program}");
+
+        // A pipeline is a single command.
+        run(&terminal, "echo one | tr a-z A-Z");
+        assert_eq!(last_block(&terminal).1, "ONE", "{program}");
 
         run(&terminal, "false");
         let (command, output, exit) = last_block(&terminal);
-        assert_eq!((command.as_str(), output.as_str(), exit), ("false", "", Some(1)));
-        assert_eq!(terminal.session.lock().last_exit, Some(1));
+        assert_eq!((command.as_str(), output.as_str(), exit), ("false", "", Some(1)), "{program}");
+        assert_eq!(terminal.session.lock().last_exit, Some(1), "{program}");
         let finished: Vec<(String, Option<i32>)> = terminal
             .session
             .lock()
@@ -572,20 +625,20 @@ mod tests {
             .iter()
             .map(|done| (done.command.clone(), done.exit))
             .collect();
-        assert_eq!(finished.last(), Some(&("false".to_owned(), Some(1))));
-        assert_eq!(finished.len(), 3, "one history entry per executed command");
+        assert_eq!(finished.last(), Some(&("false".to_owned(), Some(1))), "{program}");
+        assert_eq!(finished.len(), 4, "{program}: one history entry per executed command");
 
-        // A syntax error runs nothing, but its message stays visible.
+        // A syntax error runs nothing, but its message stays visible, without
+        // the echo of the command.
         run(&terminal, "echo )");
         let (command, output, _) = last_block(&terminal);
-        assert_eq!(command, "echo )");
-        assert!(output.contains("parse error"), "unexpected output: {output:?}");
+        assert_eq!(command, "echo )", "{program}");
+        assert!(output.contains(syntax_error), "{program}: unexpected output: {output:?}");
+        assert!(!output.starts_with("echo )"), "{program}: the echo is left out: {output:?}");
 
         // `clear` empties the block list.
-        terminal.session.lock().pending_command = Some("clear".into());
+        terminal.session.lock().submit("clear".into());
         terminal.write(b"clear\r".to_vec());
         wait_for(&terminal, "clear", |session| session.blocks.is_empty());
-
-        let _ = std::fs::remove_dir_all(&zdotdir);
     }
 }
