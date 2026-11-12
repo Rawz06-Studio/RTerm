@@ -1,0 +1,5 @@
+# Shell scripts run in Linux (WSL included): always LF, even when checked out
+# on Windows.
+*.sh text eol=lf
+*.zsh text eol=lf
+*.bash text eol=lf

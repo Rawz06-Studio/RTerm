@@ -168,9 +168,19 @@ impl Engine {
         if BUILTINS.contains(&name) || shell.commands.is_some_and(|commands| commands.contains(name)) {
             return Some(true);
         }
+        // An empty PATH: the shell runs where RTerm cannot see its programs
+        // (WSL). Anything else may exist there.
+        if shell.path == Some("") {
+            return None;
+        }
         self.refresh_executables(shell.path);
         if self.executables.borrow().1.binary_search_by(|known| known.as_str().cmp(name)).is_ok() {
             return Some(true);
+        }
+        // PowerShell loads a module's `Verb-Noun` cmdlets on first use: the
+        // shell cannot list them all up front.
+        if is_verb_noun(name) {
+            return None;
         }
         shell.commands.map(|_| false)
     }
@@ -340,10 +350,35 @@ fn list_executables(path: &str) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(directory) else {
             continue;
         };
-        names.extend(entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()));
+        for name in entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()) {
+            // Windows: `git.exe` is typed `git`.
+            if cfg!(windows)
+                && let Some((stem, extension)) = name.rsplit_once('.')
+                && WINDOWS_PROGRAMS.iter().any(|program| program.eq_ignore_ascii_case(extension))
+            {
+                names.push(stem.to_owned());
+            }
+            names.push(name);
+        }
     }
     names
 }
+
+/// `Get-ChildItem`, `Invoke-WebRequest`: a PowerShell command name.
+fn is_verb_noun(name: &str) -> bool {
+    let mut parts = name.split('-');
+    let verb = parts.next().unwrap_or_default();
+    let rest: Vec<&str> = parts.collect();
+    !verb.is_empty()
+        && !rest.is_empty()
+        && std::iter::once(verb)
+            .chain(rest)
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_alphanumeric()))
+        && verb.starts_with(|ch: char| ch.is_ascii_alphabetic())
+}
+
+/// Extensions of the files Windows runs without their extension (PATHEXT).
+const WINDOWS_PROGRAMS: &[&str] = &["exe", "cmd", "bat", "com", "ps1"];
 
 /// Files and directories whose name extends `word`.
 fn paths(word: &str, cwd: Option<&Path>, quoted: bool, directories_only: bool) -> Vec<Candidate> {
@@ -524,6 +559,21 @@ mod tests {
 
         let line = parse("git ");
         assert_eq!((line.previous.len(), line.word.as_str(), line.word_start), (1, "", 4));
+    }
+
+    #[test]
+    fn a_foreign_path_never_flags_commands() {
+        let engine = engine();
+        let commands: HashSet<String> = ["ll".to_owned()].into();
+        let shell = |path| ShellState { cwd: None, path, commands: Some(&commands) };
+        // Known PATH: a missing command is flagged.
+        assert_eq!(engine.is_command("nosuchrtermcommand", &shell(Some("/nonexistent"))), Some(false));
+        // Empty PATH (WSL): RTerm cannot tell.
+        assert_eq!(engine.is_command("nosuchrtermcommand", &shell(Some(""))), None);
+        assert_eq!(engine.is_command("ll", &shell(Some(""))), Some(true));
+        // A PowerShell cmdlet that is not loaded yet.
+        assert_eq!(engine.is_command("Get-ChildItem", &shell(Some("/nonexistent"))), None);
+        assert!(!is_verb_noun("-rf") && !is_verb_noun("ls") && !is_verb_noun("a--b"));
     }
 
     #[test]

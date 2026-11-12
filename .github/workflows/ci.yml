@@ -39,3 +39,22 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+  wsl:
+    name: WSL integration (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          # GitHub's runners do not reliably support WSL 2's virtual machine.
+          wsl-version: 1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test the WSL integration
+        run: cargo test --locked -- --ignored wsl_commands_become_blocks

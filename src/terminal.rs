@@ -27,6 +27,8 @@ use crate::pty_io::PtyIo;
 
 const ZSH_INTEGRATION: &str = include_str!("shell/zshenv.zsh");
 const BASH_INTEGRATION: &str = include_str!("shell/bashrc.bash");
+const WSL_START: &str = include_str!("shell/wsl-start.sh");
+const POWERSHELL_INTEGRATION: &str = include_str!("shell/rterm.ps1");
 
 /// Number of finished blocks kept in memory.
 const MAX_BLOCKS: usize = 1000;
@@ -318,20 +320,27 @@ impl Terminal {
         ]);
         let mut shell = (!config.shell.program.is_empty())
             .then(|| tty::Shell::new(config.shell.program.clone(), config.shell.args.clone()));
-        // Windows: always name the shell, and start WSL in the Linux home
-        // rather than in the Windows one.
+        // Windows always names the shell (alacritty's default is PowerShell).
         if cfg!(windows) && shell.is_none() {
-            let mut args = config.shell.args.clone();
-            if args.is_empty() && shell_program.eq_ignore_ascii_case("wsl.exe") {
-                args = vec!["--cd".to_owned(), "~".to_owned()];
-            }
-            shell = Some(tty::Shell::new(shell_program.clone(), args));
+            shell = Some(tty::Shell::new(shell_program.clone(), config.shell.args.clone()));
         }
         // An integration that fails to install does not prevent working: the
         // terminal then stays in classic display.
-        let kind = Path::new(&shell_program).file_name().and_then(|name| name.to_str()).unwrap_or_default();
-        match kind {
-            "zsh" if config.shell.integration => match install_integration("zsh", ".zshenv", ZSH_INTEGRATION) {
+        let kind = Path::new(&shell_program)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let integrate = |name: &str, result: Result<Vec<String>>| match result {
+            Ok(args) => Some(tty::Shell::new(shell_program.clone(), args)),
+            Err(error) => {
+                eprintln!("rterm: {name} integration unavailable ({error:#})");
+                None
+            }
+        };
+        match kind.as_str() {
+            _ if !config.shell.integration => {}
+            "zsh" if cfg!(unix) => match install_integration("zsh", ".zshenv", ZSH_INTEGRATION) {
                 Ok(script) => {
                     if let Ok(original) = std::env::var("ZDOTDIR") {
                         env.insert("RTERM_ORIG_ZDOTDIR".to_owned(), original);
@@ -341,24 +350,56 @@ impl Terminal {
                 }
                 Err(error) => eprintln!("rterm: zsh integration unavailable ({error:#})"),
             },
-            "bash" if config.shell.integration => match install_integration("bash", "rterm.bash", BASH_INTEGRATION) {
-                Ok(script) => {
-                    // `--rcfile` only applies to non-login shells: the script
-                    // reads the login files itself where terminals start
-                    // login shells (macOS).
-                    if cfg!(target_os = "macos") {
-                        env.insert("RTERM_BASH_LOGIN".to_owned(), "1".to_owned());
-                        // You picked bash: macOS's advice to switch to zsh
-                        // would only clutter the first block.
-                        env.insert("BASH_SILENCE_DEPRECATION_WARNING".to_owned(), "1".to_owned());
-                    }
+            "bash" if cfg!(unix) => {
+                // `--rcfile` only applies to non-login shells: the script
+                // reads the login files itself where terminals start login
+                // shells (macOS).
+                if cfg!(target_os = "macos") {
+                    env.insert("RTERM_BASH_LOGIN".to_owned(), "1".to_owned());
+                    // You picked bash: macOS's advice to switch to zsh would
+                    // only clutter the first block.
+                    env.insert("BASH_SILENCE_DEPRECATION_WARNING".to_owned(), "1".to_owned());
+                }
+                let args = install_integration("bash", "rterm.bash", BASH_INTEGRATION).map(|script| {
                     let mut args = vec!["--rcfile".to_owned(), script.to_string_lossy().into_owned()];
                     args.extend(config.shell.args.iter().cloned());
                     args.push("-i".to_owned());
-                    shell = Some(tty::Shell::new(shell_program.clone(), args));
-                }
-                Err(error) => eprintln!("rterm: bash integration unavailable ({error:#})"),
-            },
+                    args
+                });
+                shell = integrate("bash", args).or(shell);
+            }
+            // WSL: a start script, run inside Linux, launches the login shell
+            // with the zsh or bash integration. Only without arguments of
+            // yours, which could name another distribution or command.
+            "wsl" if cfg!(windows) && config.shell.args.is_empty() => {
+                let args = install_wsl_integration().map(|directory| {
+                    env.insert("RTERM_SHELL_DIR".to_owned(), directory.to_string_lossy().into_owned());
+                    // Variables WSL passes on to Linux; `/p` translates the
+                    // Windows path into a Linux one.
+                    let mut shared = std::env::var("WSLENV").unwrap_or_default();
+                    for name in ["RTERM_SHELL_DIR/p", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] {
+                        if !shared.is_empty() {
+                            shared.push(':');
+                        }
+                        shared.push_str(name);
+                    }
+                    env.insert("WSLENV".to_owned(), shared);
+                    ["--cd", "~", "-e", "sh", "-c", ". \"$RTERM_SHELL_DIR/wsl/start.sh\""]
+                        .map(str::to_owned)
+                        .to_vec()
+                });
+                shell = integrate("WSL", args).or(shell);
+            }
+            "pwsh" | "powershell" if cfg!(windows) => {
+                let args = install_integration("powershell", "rterm.ps1", POWERSHELL_INTEGRATION).map(|script| {
+                    let mut args = config.shell.args.clone();
+                    let script = script.to_string_lossy().replace('\'', "''");
+                    args.extend(["-NoLogo".to_owned(), "-NoExit".to_owned(), "-Command".to_owned()]);
+                    args.push(format!(". '{script}'"));
+                    args
+                });
+                shell = integrate("PowerShell", args).or(shell);
+            }
             _ => {}
         }
         let working_directory = cwd.filter(|cwd| cwd.is_dir()).or_else(|| {
@@ -473,6 +514,16 @@ fn windows_default_shell() -> String {
     }
 }
 
+/// Writes what WSL needs (the start script and the zsh and bash
+/// integrations) and returns the folder holding them.
+fn install_wsl_integration() -> Result<PathBuf> {
+    install_integration("zsh", ".zshenv", ZSH_INTEGRATION)?;
+    install_integration("bash", "rterm.bash", BASH_INTEGRATION)?;
+    let start = install_integration("wsl", "start.sh", WSL_START)?;
+    let shell_directory = start.parent().and_then(Path::parent).context("integration folder")?;
+    Ok(shell_directory.to_path_buf())
+}
+
 /// Writes an integration script to `~/.config/rterm/shell/<shell>/<file>`
 /// and returns its path.
 fn install_integration(shell: &str, file: &str, content: &str) -> Result<PathBuf> {
@@ -483,9 +534,12 @@ fn install_integration(shell: &str, file: &str, content: &str) -> Result<PathBuf
     std::fs::create_dir_all(&directory)
         .with_context(|| format!("creating {}", directory.display()))?;
     let script = directory.join(file);
+    // Scripts run by Unix shells (WSL included) must not carry Windows line
+    // endings, whatever the checkout they were built from.
+    let content = content.replace("\r\n", "\n");
     let up_to_date = std::fs::read_to_string(&script).is_ok_and(|current| current == content);
     if !up_to_date {
-        std::fs::write(&script, content).with_context(|| format!("writing {}", script.display()))?;
+        std::fs::write(&script, &content).with_context(|| format!("writing {}", script.display()))?;
     }
     Ok(script)
 }
@@ -532,8 +586,9 @@ fn parse_loop(chunks: Receiver<Vec<u8>>, session: Arc<FairMutex<Session>>, liste
     listener.send_event(Event::Exit);
 }
 
-// These tests launch real zsh and bash shells.
-#[cfg(all(test, unix))]
+// These tests launch real shells: zsh and bash on Unix, PowerShell (and WSL,
+// when a distribution is installed) on Windows.
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 
@@ -552,15 +607,18 @@ pub(crate) mod tests {
 
     /// Waits for a condition on the session to become true.
     fn wait_for(terminal: &Terminal, what: &str, condition: impl Fn(&Session) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(15);
+        // WSL can take a while to start its virtual machine.
+        let deadline = Instant::now() + Duration::from_secs(if cfg!(windows) { 60 } else { 15 });
         while !condition(&terminal.session.lock()) {
             if Instant::now() >= deadline {
                 // What the shell showed, to understand a failure in CI.
                 let session = terminal.session.lock();
                 let screen = Block::from_term(0, &session.prompt).text(None);
-                let pid = terminal.io.child_id() as i32;
+                #[cfg(unix)]
                 // SAFETY: signal 0 only checks that the process exists.
-                let alive = unsafe { libc::kill(pid, 0) } == 0;
+                let alive = unsafe { libc::kill(terminal.io.child_id() as i32, 0) } == 0;
+                #[cfg(windows)]
+                let alive = "unknown";
                 panic!(
                     "timed out: {what} (integrated: {}, mode: {:?}, blocks: {}, shell alive: {alive}, bytes read: {})\n--- screen ---\n{screen}\n--- raw ---\n{:?}",
                     session.integrated,
@@ -594,6 +652,7 @@ pub(crate) mod tests {
     /// Runs the same scenario in a real zsh and a real bash: their commands
     /// must become blocks. One test for both, run one after the other,
     /// because the zsh part changes an environment variable.
+    #[cfg(unix)]
     #[test]
     fn shell_commands_become_blocks() {
         if Path::new("/bin/zsh").exists() {
@@ -669,6 +728,79 @@ pub(crate) mod tests {
         assert!(!output.starts_with("echo )"), "{program}: the echo is left out: {output:?}");
 
         // `clear` empties the block list.
+        terminal.session.lock().submit("clear".into());
+        terminal.write(b"clear\r".to_vec());
+        wait_for(&terminal, "clear", |session| session.blocks.is_empty());
+    }
+
+    /// Windows PowerShell 5.1 and, when installed, PowerShell 7.
+    #[cfg(windows)]
+    #[test]
+    fn powershell_commands_become_blocks() {
+        check_powershell("powershell.exe");
+        let has_pwsh = std::process::Command::new("pwsh.exe")
+            .args(["-NoProfile", "-Command", "exit"])
+            .status()
+            .is_ok_and(|status| status.success());
+        if has_pwsh {
+            check_powershell("pwsh.exe");
+        }
+    }
+
+    /// bash (or zsh) inside WSL, through the start script. Needs a WSL
+    /// distribution: CI installs one and runs it with `--ignored`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "needs a WSL distribution"]
+    fn wsl_commands_become_blocks() {
+        check_shell("wsl.exe", &[], "syntax error");
+        // RTerm cannot read the Linux PATH: the shell sends an empty one.
+        let mut config = Config::defaults();
+        config.shell.program = "wsl.exe".into();
+        let size = GridSize { columns: 80, lines: 24, cell_width: 8.0, cell_height: 16.0 };
+        let (terminal, _events) = Terminal::spawn(&config, size, None).unwrap();
+        wait_for(&terminal, "first prompt", |session| session.mode() == Mode::Editing);
+        assert_eq!(terminal.session.lock().path.as_deref(), Some(""));
+    }
+
+    #[cfg(windows)]
+    fn check_powershell(program: &str) {
+        eprintln!("checking {program}");
+        let mut config = Config::defaults();
+        config.shell.program = program.into();
+        let size = GridSize { columns: 80, lines: 24, cell_width: 8.0, cell_height: 16.0 };
+        let (terminal, _events) = Terminal::spawn(&config, size, None).unwrap();
+
+        wait_for(&terminal, "first prompt", |session| session.mode() == Mode::Editing);
+        assert!(terminal.session.lock().cwd.is_some(), "{program}: the current directory is reported");
+        assert!(terminal.session.lock().path.is_some(), "{program}: the PATH is reported");
+        let known = terminal.session.lock().shell_commands.clone().expect("shell commands are reported");
+        assert!(
+            ["cd", "Get-Command", "if"].iter().all(|name| known.contains(*name)),
+            "{program}: aliases, loaded cmdlets and keywords"
+        );
+
+        run(&terminal, "Write-Output hello-rterm");
+        assert_eq!(
+            last_block(&terminal),
+            ("Write-Output hello-rterm".into(), "hello-rterm".into(), Some(0)),
+            "{program}"
+        );
+
+        run(&terminal, "'a', 'b' | Write-Output");
+        assert_eq!(last_block(&terminal).1, "a\nb", "{program}");
+
+        // A program's exit code.
+        run(&terminal, "cmd /c exit 3");
+        let (_, _, exit) = last_block(&terminal);
+        assert_eq!(exit, Some(3), "{program}");
+        assert_eq!(terminal.session.lock().last_exit, Some(3), "{program}");
+
+        run(&terminal, "echo )");
+        let (command, output, _) = last_block(&terminal);
+        assert_eq!(command, "echo )", "{program}");
+        assert!(output.contains("Unexpected token"), "{program}: unexpected output: {output:?}");
+
         terminal.session.lock().submit("clear".into());
         terminal.write(b"clear\r".to_vec());
         wait_for(&terminal, "clear", |session| session.blocks.is_empty());

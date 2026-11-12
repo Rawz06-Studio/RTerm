@@ -2,7 +2,9 @@
 //!
 //! - Unix: blocking reads and writes on copies of the PTY's file.
 //! - Windows: ConPTY's pipes are non-blocking: they are read when `polling`
-//!   reports them ready, and written again when they are full.
+//!   reports them ready, and written again when they are full. alacritty's
+//!   wrappers report "nothing for now" as 0 bytes, not as an end of file:
+//!   the end comes from the child process's exit event.
 //!
 //! Either way, what the shell prints goes to `chunks`, and what arrives on
 //! `inputs` goes to the shell.
@@ -175,8 +177,11 @@ mod windows {
             // before exiting.
             loop {
                 match pty.reader().read(&mut buffer) {
-                    Ok(0) => break 'poll,
+                    // Nothing more for now.
+                    Ok(0) => break,
                     Ok(read) => {
+                        #[cfg(test)]
+                        crate::terminal::tests::record_read(&buffer[..read]);
                         if chunks.send(buffer[..read].to_vec()).is_err() {
                             break 'poll;
                         }
@@ -206,9 +211,9 @@ mod windows {
                     Err(_) => return,
                 };
                 match written {
-                    Ok(0) => return,
-                    Ok(count) => rest = &rest[count..],
                     // The pipe is full: the shell has not read it yet.
+                    Ok(0) => std::thread::sleep(Duration::from_millis(2)),
+                    Ok(count) => rest = &rest[count..],
                     Err(error) if error.kind() == ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(2));
                     }

@@ -156,8 +156,9 @@ RTerm is not signed with a paid certificate, so Windows may say it protected
 your PC: click **More info**, then **Run anyway**.
 
 RTerm opens your WSL distribution when one is installed (in your Linux home),
-otherwise PowerShell. On Windows, every shell runs as a classic terminal for
-now: no blocks and no input editor yet. To pick a shell:
+otherwise PowerShell. Blocks and the input editor work with your WSL shell
+(zsh or bash) and with PowerShell (5.1 and 7); `cmd.exe` and other shells run
+as a classic terminal. To pick a shell:
 
 ```toml
 [shell]
@@ -251,11 +252,13 @@ record = false   # do not keep the local history database
 
 ## Shell integration
 
-Blocks and the input editor rely on a small integration for **zsh** and
-**bash** (3.2, the one macOS ships, and later) that RTerm loads automatically:
-it tells RTerm when each command starts and ends. It lives in
-`~/.config/rterm/shell/`, loads your usual configuration first (`.zshrc`,
-`.bashrc`, `.bash_profile`…) and never modifies your dotfiles.
+Blocks and the input editor rely on a small integration for **zsh**,
+**bash** (3.2, the one macOS ships, and later) and **PowerShell** (5.1 and 7)
+that RTerm loads automatically: it tells RTerm when each command starts and
+ends. It lives in `~/.config/rterm/shell/`, loads your usual configuration
+first (`.zshrc`, `.bashrc`, `.bash_profile`, your PowerShell profile…) and
+never modifies your dotfiles. On Windows, RTerm starts your WSL login shell
+with the same zsh or bash integration.
 
 RTerm uses your login shell (`$SHELL`); to pick another one:
 
@@ -269,8 +272,7 @@ Because RTerm draws its own input editor, your prompt and line-editing plugins
 are not displayed. Your aliases, functions, environment and history all work
 as usual.
 
-Other shells (fish, nushell, and every shell on Windows for now) run as a
-classic terminal. To get the
+Other shells (fish, nushell, `cmd.exe`…) run as a classic terminal. To get the
 same classic behavior with zsh or bash, set `integration = false` in the
 `[shell]` section.
 
@@ -316,8 +318,10 @@ macOS, in the command palette everywhere) and printed by `rterm --version`.
 
 ## Known limitations
 
-- Blocks and the input editor require zsh or bash, on macOS or Linux.
-- Windows is a preview: classic terminal only, no automatic updates.
+- Blocks and the input editor require zsh, bash or PowerShell.
+- Windows is a preview: no automatic updates yet. Under WSL, RTerm cannot
+  see the Linux programs in your `PATH`: it completes and highlights your
+  aliases and builtins, but does not flag commands it does not know.
 - Linux: no automatic updates yet. RTerm asks the system to draw its title
   bar; desktops that leave that to applications (GNOME on Wayland) may show
   none.
