@@ -474,12 +474,24 @@ fn read_loop(mut pty: File, chunks: SyncSender<Vec<u8>>) {
             // End of file or error: the shell has exited.
             Ok(0) => break,
             Ok(read) => {
+                #[cfg(test)]
+                {
+                    tests::BYTES_READ.fetch_add(read, std::sync::atomic::Ordering::Relaxed);
+                    let mut first = tests::FIRST_BYTES.lock().unwrap();
+                    if first.len() < 600 {
+                        first.extend_from_slice(&buffer[..read.min(600)]);
+                    }
+                }
                 if chunks.send(buffer[..read].to_vec()).is_err() {
                     break;
                 }
             }
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
-            Err(_) => break,
+            Err(_error) => {
+                #[cfg(test)]
+                eprintln!("pty read error: {_error}");
+                break;
+            }
         }
     }
 }
@@ -538,11 +550,30 @@ fn parse_loop(chunks: Receiver<Vec<u8>>, session: Arc<FairMutex<Session>>, liste
 mod tests {
     use super::*;
 
+    /// Bytes read from all PTYs, to tell a silent shell from a lost output.
+    pub static BYTES_READ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    pub static FIRST_BYTES: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
     /// Waits for a condition on the session to become true.
     fn wait_for(terminal: &Terminal, what: &str, condition: impl Fn(&Session) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(15);
         while !condition(&terminal.session.lock()) {
-            assert!(Instant::now() < deadline, "timed out: {what}");
+            if Instant::now() >= deadline {
+                // What the shell showed, to understand a failure in CI.
+                let session = terminal.session.lock();
+                let screen = Block::from_term(0, &session.prompt).text(None);
+                let pid = terminal.pty.child().id() as i32;
+                // SAFETY: signal 0 only checks that the process exists.
+                let alive = unsafe { libc::kill(pid, 0) } == 0;
+                panic!(
+                    "timed out: {what} (integrated: {}, mode: {:?}, blocks: {}, shell alive: {alive}, bytes read: {})\n--- screen ---\n{screen}\n--- raw ---\n{:?}",
+                    session.integrated,
+                    session.mode(),
+                    session.blocks.len(),
+                    BYTES_READ.load(std::sync::atomic::Ordering::Relaxed),
+                    String::from_utf8_lossy(&FIRST_BYTES.lock().unwrap()),
+                );
+            }
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -574,6 +605,10 @@ mod tests {
             // test only depends on zsh and the integration script.
             let zdotdir = std::env::temp_dir().join(format!("rterm-test-{}", std::process::id()));
             std::fs::create_dir_all(&zdotdir).unwrap();
+            // Debian and Ubuntu run compinit from /etc/zsh/zshrc, which asks a
+            // question (and waits) when it finds directories it finds insecure,
+            // as on GitHub's runners. This variable skips it.
+            std::fs::write(zdotdir.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
             // SAFETY: this test is the only one reading or modifying the environment.
             unsafe { std::env::set_var("ZDOTDIR", &zdotdir) };
             check_shell("/bin/zsh", &["-i"], "parse error");
@@ -587,6 +622,7 @@ mod tests {
     }
 
     fn check_shell(program: &str, args: &[&str], syntax_error: &str) {
+        eprintln!("checking {program}");
         let mut config = Config::defaults();
         config.shell.program = program.into();
         config.shell.args = args.iter().map(|arg| arg.to_string()).collect();
