@@ -88,6 +88,9 @@ struct Command {
     run: Run,
 }
 
+/// An entry of the app menu: label, shortcut, action.
+type MenuItem = (&'static str, &'static str, Box<dyn Action>);
+
 /// The command palette, when it is open.
 struct PaletteUi {
     query: String,
@@ -114,6 +117,8 @@ pub struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
     palette: Option<PaletteUi>,
+    /// The app menu (Windows and Linux, where there is no menu bar), when open.
+    menu_open: bool,
     /// Whether macOS is in dark mode, for the "system" theme mode.
     dark: bool,
     window_title: String,
@@ -145,6 +150,7 @@ impl Workspace {
             tabs: Vec::new(),
             active: 0,
             palette: None,
+            menu_open: false,
             dark,
             window_title: String::new(),
             updater: update::global(cx),
@@ -212,6 +218,7 @@ impl Workspace {
                         "palette" => this.toggle_palette(&TogglePalette, window, cx),
                         "about" => crate::about::open(cx),
                         "settings" => settings::open_window(cx),
+                        "menu" => this.menu_open = true,
                         // Bypasses the action, so that nothing is written to the config.
                         "vertical-tabs" => this.tabs_layout = TabsLayout::Vertical,
                         other => {
@@ -752,6 +759,126 @@ impl Workspace {
             // The rest of the bar is used to move the window.
             .child(drag_region().flex_1().min_w(px(40.)).h_full())
             .children(self.render_update_badge(cx))
+            .children(self.render_menu_button(cx))
+    }
+
+    /// The "⋯" button that opens the app menu. macOS has its menu bar instead.
+    fn render_menu_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if platform::IS_MAC {
+            return None;
+        }
+        let foreground = hsla(self.colors.foreground());
+        let hover_background = hsla(mix(self.colors.foreground(), self.colors.background(), 0.08));
+        Some(
+            div()
+                .id("menu")
+                .flex_none()
+                .h(px(26.))
+                .w(px(32.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_md()
+                .text_size(px(16.))
+                .text_color(if self.menu_open { foreground } else { hsla(self.colors.muted) })
+                .when(self.menu_open, |button| button.bg(hover_background))
+                .hover(|style| style.text_color(foreground).bg(hover_background))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.menu_open = !this.menu_open;
+                        cx.notify();
+                    }),
+                )
+                .child("⋯")
+                .into_any_element(),
+        )
+    }
+
+    /// The app menu, under the "⋯" button: what macOS puts in its menu bar.
+    fn render_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let background = self.colors.background();
+        let foreground = hsla(self.colors.foreground());
+        let muted = hsla(self.colors.muted);
+        let hover_background = hsla(mix(self.colors.foreground(), background, 0.08));
+        let border = hsla(mix(self.colors.foreground(), background, 0.16));
+        // `None` draws a separator.
+        let items: Vec<Option<MenuItem>> = vec![
+            Some(("New Tab", "Ctrl+Shift+T", Box::new(NewTab))),
+            Some(("New Window", "Ctrl+Shift+N", Box::new(NewWindow))),
+            Some(("Split Right", "Ctrl+Shift+D", Box::new(SplitRight))),
+            Some(("Split Down", "Ctrl+Shift+E", Box::new(SplitDown))),
+            None,
+            Some(("Command Palette", "Ctrl+Shift+P", Box::new(TogglePalette))),
+            Some(("Settings", "Ctrl+,", Box::new(OpenSettings))),
+            Some(("About RTerm", "", Box::new(About))),
+            None,
+            Some(("Quit RTerm", "Ctrl+Shift+Q", Box::new(Quit))),
+        ];
+        let rows: Vec<AnyElement> = items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| match item {
+                None => div().h(px(1.)).my_1().bg(border).into_any_element(),
+                Some((label, hint, action)) => div()
+                    .id(("menu-item", index))
+                    .px_3()
+                    .py(px(5.))
+                    .flex()
+                    .justify_between()
+                    .gap_6()
+                    .rounded_md()
+                    .hover(|style| style.bg(hover_background))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.menu_open = false;
+                            cx.notify();
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        }),
+                    )
+                    .child(label.to_owned())
+                    .child(div().text_color(muted).child(hint.to_owned()))
+                    .into_any_element(),
+            })
+            .collect();
+
+        // A transparent veil: a click outside the menu closes it.
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.menu_open = false;
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(TAB_BAR_HEIGHT))
+                    .right(px(8.))
+                    .w(px(260.))
+                    .p_1()
+                    .flex()
+                    .flex_col()
+                    .bg(hsla(mix(self.colors.foreground(), background, 0.06)))
+                    .border_1()
+                    .border_color(border)
+                    .rounded_lg()
+                    .shadow_lg()
+                    .text_size(px(13.))
+                    .text_color(foreground)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .children(rows),
+            )
+            .into_any_element()
     }
 
     /// A pill that announces an update and installs it when clicked.
@@ -820,16 +947,25 @@ impl Workspace {
 
     /// A strip above the content when the tabs are on the left: it shows
     /// the title and is used to move the window.
-    fn render_title_strip(&self, title: &str) -> impl IntoElement {
-        drag_region()
+    fn render_title_strip(&self, title: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
             .h(px(TAB_BAR_HEIGHT))
             .flex_none()
             .flex()
             .items_center()
-            .justify_center()
-            .text_size(px(12.5))
-            .text_color(hsla(self.colors.muted))
-            .child(title.to_owned())
+            .pr_2()
+            .child(
+                drag_region()
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(12.5))
+                    .text_color(hsla(self.colors.muted))
+                    .child(title.to_owned()),
+            )
+            .children(self.render_menu_button(cx))
     }
 
     fn toggle_tabs_layout(&mut self, _: &ToggleTabsLayout, _: &mut Window, cx: &mut Context<Self>) {
@@ -1048,7 +1184,7 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .when(vertical, |main| {
-                main.child(self.render_title_strip(titles.get(self.active).map_or("", String::as_str)))
+                main.child(self.render_title_strip(titles.get(self.active).map_or("", String::as_str), cx))
             })
 
             .children(self.error.clone().map(|error| {
@@ -1078,7 +1214,8 @@ impl Render for Workspace {
         } else {
             root.child(self.render_tab_bar(&titles, cx)).child(main)
         };
-        root.children(self.palette.as_ref().map(|palette| self.render_palette(palette, cx)))
+        root.children(self.menu_open.then(|| self.render_menu(cx)))
+            .children(self.palette.as_ref().map(|palette| self.render_palette(palette, cx)))
 
     }
 }

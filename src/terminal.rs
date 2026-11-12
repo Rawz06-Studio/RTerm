@@ -237,12 +237,13 @@ impl Session {
                     let id = self.next_id();
                     let mut startup = Block::from_term(id, &self.prompt);
                     startup.wrap(self.size.columns);
-                    // macOS's "Last login" alone says nothing useful: we only
-                    // keep the block if the shell said something else.
+                    // Blank lines (what ConPTY draws on Windows) or macOS's
+                    // "Last login" alone say nothing useful: we only keep the
+                    // block if the shell said something else.
                     let text = startup.text(None);
-                    let only_last_login =
-                        text.trim().lines().count() == 1 && text.trim().starts_with("Last login");
-                    if !startup.is_empty() && !only_last_login {
+                    let text = text.trim();
+                    let only_last_login = text.lines().count() == 1 && text.starts_with("Last login");
+                    if !text.is_empty() && !only_last_login {
                         self.push_block(startup);
                     }
                 }
