@@ -37,6 +37,9 @@ cursor_shape = "beam"
 # special characters. Keep false on layouts that need Option to type
 # characters such as | { } [ ] ~ #.
 option_as_meta = false
+# Allow terminal output to write to the system clipboard via OSC 52.
+# This can expose or replace clipboard contents, so it is disabled by default.
+allow_osc52 = false
 
 [history]
 # Records the directory, exit code and duration of each command in

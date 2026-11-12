@@ -42,12 +42,20 @@ tar -C "$dist" -czf "$dist/$name.tar.gz" "$name"
 if [[ "${RTERM_NO_APPIMAGE:-}" != 1 ]]; then
     echo "==> Packing $name.AppImage"
     tool="$target_dir/appimagetool/appimagetool-$arch.AppImage"
+    case "$arch" in
+        x86_64) tool_sha256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0" ;;
+        aarch64) tool_sha256="f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158" ;;
+        *) echo "Unsupported AppImage architecture: $arch" >&2; exit 1 ;;
+    esac
     if [[ ! -x "$tool" ]]; then
         mkdir -p "$(dirname "$tool")"
-        curl -fsSL -o "$tool" \
-            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$arch.AppImage"
+        curl -fsSL -o "$tool.tmp" \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$arch.AppImage"
+        echo "$tool_sha256  $tool.tmp" | sha256sum --check --status
+        mv "$tool.tmp" "$tool"
         chmod +x "$tool"
     fi
+    echo "$tool_sha256  $tool" | sha256sum --check --status
     appdir="$dist/RTerm.AppDir"
     install -Dm755 "$binary" "$appdir/usr/bin/rterm"
     install -Dm644 packaging/linux/rterm.desktop "$appdir/rterm.desktop"

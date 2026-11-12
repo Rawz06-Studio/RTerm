@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{self, Term, TermMode};
+use alacritty_terminal::term::{self, Osc52, Term, TermMode};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle, Processor, StdSyncHandler};
 use anyhow::{Context as _, Result};
@@ -307,6 +307,11 @@ impl Terminal {
                     CursorShapeConfig::Underline => CursorShape::Underline,
                 },
                 blinking: false,
+            },
+            osc52: if config.terminal.allow_osc52 {
+                Osc52::OnlyCopy
+            } else {
+                Osc52::Disabled
             },
             ..term::Config::default()
         };
