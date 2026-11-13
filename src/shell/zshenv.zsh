@@ -32,13 +32,16 @@ if [[ -o interactive ]]; then
     _rterm_precmd() {
         local rterm_status=$?
         builtin printf '\e]133;D;%s\a\e]1337;CurrentDir=%s\a' "$rterm_status" "$PWD"
+        # Under WSL, RTerm (on Windows) reads this shell's files through
+        # \\wsl$\<distribution>: it needs the distribution and the home.
+        if [[ -n "$RTERM_WSL" && -n "$WSL_DISTRO_NAME" && -z "$_rterm_wsl_sent" ]]; then
+            typeset -g _rterm_wsl_sent=1
+            builtin printf '\e]1337;RTermWsl=%s:%s\a' "$WSL_DISTRO_NAME" "$HOME"
+        fi
         # The PATH is used to complete commands; sent whenever it changes.
-        # Under WSL, RTerm cannot read it: it gets an empty one, once.
-        local rterm_path="$PATH"
-        [[ -n "$RTERM_NO_PATH" ]] && rterm_path=""
-        if [[ "$rterm_path" != "$_rterm_path" || -z "$_rterm_path_sent" ]]; then
-            typeset -g _rterm_path="$rterm_path" _rterm_path_sent=1
-            builtin printf '\e]1337;RTermPath=%s\a' "$rterm_path"
+        if [[ "$PATH" != "$_rterm_path" ]]; then
+            typeset -g _rterm_path="$PATH"
+            builtin printf '\e]1337;RTermPath=%s\a' "$PATH"
         fi
         # Aliases, functions and builtins: used to highlight the input and
         # to complete commands. Sent whenever their number changes.

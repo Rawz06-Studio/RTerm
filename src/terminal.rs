@@ -21,6 +21,7 @@ use anyhow::{Context as _, Result};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 
 use crate::block::{Block, LiveBlock};
+use crate::completion::Remote;
 use crate::config::{Config, CursorShapeConfig};
 use crate::osc::{Mark, Scanner, Segment};
 use crate::pty_io::PtyIo;
@@ -120,6 +121,8 @@ pub struct Session {
     pub path: Option<String>,
     /// The shell's aliases, functions and builtins, if it reported them.
     pub shell_commands: Option<Arc<HashSet<String>>>,
+    /// Where RTerm reads the shell's files, when they are elsewhere (WSL).
+    pub remote: Option<Remote>,
     /// Finished commands, waiting to be written to the history.
     pub finished: Vec<FinishedCommand>,
     next_id: u64,
@@ -274,6 +277,7 @@ impl Session {
             Mark::CommandEnd(exit) => self.finish_block(exit),
             Mark::Cwd(path) => self.cwd = Some(PathBuf::from(path)),
             Mark::Path(path) => self.path = Some(path),
+            Mark::Wsl { distribution, home } => self.remote = Some(Remote::wsl(&distribution, &home)),
             Mark::Commands(names) => {
                 let names = names.split_whitespace().map(str::to_owned).collect();
                 self.shell_commands = Some(Arc::new(names));
@@ -390,9 +394,14 @@ impl Terminal {
                         shared.push_str(name);
                     }
                     env.insert("WSLENV".to_owned(), shared);
-                    ["--cd", "~", "-e", "sh", "-c", ". \"$RTERM_SHELL_DIR/wsl/start.sh\""]
-                        .map(str::to_owned)
-                        .to_vec()
+                    // A new tab opens where the current one is (a Linux path).
+                    let start = cwd
+                        .as_deref()
+                        .map(|cwd| cwd.to_string_lossy().into_owned())
+                        .filter(|cwd| cwd.starts_with('/'))
+                        .unwrap_or_else(|| "~".to_owned());
+                    let script = ". \"$RTERM_SHELL_DIR/wsl/start.sh\"".to_owned();
+                    vec!["--cd".to_owned(), start, "-e".to_owned(), "sh".to_owned(), "-c".to_owned(), script]
                 });
                 shell = integrate("WSL", args).or(shell);
             }
@@ -437,6 +446,7 @@ impl Terminal {
             last_exit: None,
             path: None,
             shell_commands: None,
+            remote: None,
             finished: Vec::new(),
             next_id: 0,
             size,
@@ -760,13 +770,26 @@ pub(crate) mod tests {
     #[ignore = "needs a WSL distribution"]
     fn wsl_commands_become_blocks() {
         check_shell("wsl.exe", &[], "syntax error");
-        // RTerm cannot read the Linux PATH: the shell sends an empty one.
+
+        // RTerm reads the shell's files through \\wsl$: its home, its PATH.
         let mut config = Config::defaults();
         config.shell.program = "wsl.exe".into();
         let size = GridSize { columns: 80, lines: 24, cell_width: 8.0, cell_height: 16.0 };
         let (terminal, _events) = Terminal::spawn(&config, size, None).unwrap();
         wait_for(&terminal, "first prompt", |session| session.mode() == Mode::Editing);
-        assert_eq!(terminal.session.lock().path.as_deref(), Some(""));
+        let session = terminal.session.lock();
+        let remote = session.remote.clone().expect("the WSL distribution is reported");
+        assert!(remote.local(&remote.home).is_dir(), "{} is readable", remote.local(&remote.home).display());
+        let engine = crate::completion::Engine::load();
+        let shell = crate::completion::ShellState {
+            cwd: session.cwd.as_deref(),
+            path: session.path.as_deref(),
+            commands: session.shell_commands.as_deref(),
+            remote: Some(&remote),
+        };
+        assert_eq!(engine.is_command("ls", &shell), Some(true), "ls is found in the Linux PATH");
+        assert_eq!(engine.is_command("no-such-program-rterm", &shell), None);
+        assert_eq!(engine.is_command("nosuchprogramrterm", &shell), Some(false));
     }
 
     #[cfg(windows)]

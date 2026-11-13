@@ -10,10 +10,9 @@ unset RTERM_SHELL_DIR
 rterm_shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
 [ -n "$rterm_shell" ] || rterm_shell="${SHELL:-/bin/sh}"
 export SHELL="$rterm_shell"
-# RTerm runs on Windows and cannot read the Linux directories of the PATH:
-# the integration does not send it, so RTerm does not flag commands it
-# cannot find there.
-export RTERM_NO_PATH=1
+# Tells the integration to send the distribution and the home directory:
+# RTerm, on Windows, reads this shell's files through \\wsl$.
+export RTERM_WSL=1
 
 case "${rterm_shell##*/}" in
     zsh)

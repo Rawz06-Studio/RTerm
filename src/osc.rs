@@ -23,6 +23,9 @@ pub enum Mark {
     /// `OSC 1337 ; RTermCommands=…` — the shell's aliases, functions and
     /// builtins, separated by spaces.
     Commands(String),
+    /// `OSC 1337 ; RTermWsl=distribution:home` — the shell runs in WSL:
+    /// RTerm reads its files through `\\wsl$\<distribution>`.
+    Wsl { distribution: String, home: String },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -35,7 +38,8 @@ const SEMANTIC_PREFIX: &[u8] = b"\x1b]133;";
 const CWD_PREFIX: &[u8] = b"\x1b]1337;CurrentDir=";
 const PATH_PREFIX: &[u8] = b"\x1b]1337;RTermPath=";
 const COMMANDS_PREFIX: &[u8] = b"\x1b]1337;RTermCommands=";
-const PREFIXES: [&[u8]; 4] = [SEMANTIC_PREFIX, CWD_PREFIX, PATH_PREFIX, COMMANDS_PREFIX];
+const WSL_PREFIX: &[u8] = b"\x1b]1337;RTermWsl=";
+const PREFIXES: [&[u8]; 5] = [SEMANTIC_PREFIX, CWD_PREFIX, PATH_PREFIX, COMMANDS_PREFIX, WSL_PREFIX];
 
 /// Beyond this size, an unterminated sequence is no longer a mark.
 /// (A well-stocked `PATH` easily exceeds a few kilobytes.)
@@ -134,6 +138,10 @@ impl Scanner {
         if prefix == COMMANDS_PREFIX {
             return Some(Mark::Commands(payload.into_owned()));
         }
+        if prefix == WSL_PREFIX {
+            let (distribution, home) = payload.split_once(':')?;
+            return Some(Mark::Wsl { distribution: distribution.to_owned(), home: home.to_owned() });
+        }
         let mut fields = payload.split(';');
         match fields.next()? {
             "A" => Some(Mark::PromptStart),
@@ -203,5 +211,15 @@ mod tests {
         let (bytes, marks) = scan(input, 3);
         assert_eq!(bytes, b"\x1b]0;title\x07\x1b[31mred");
         assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn wsl_mark_names_the_distribution_and_home() {
+        let (bytes, marks) = scan(b"a\x1b]1337;RTermWsl=Ubuntu-24.04:/home/me\x07b", 3);
+        assert_eq!(bytes, b"ab");
+        assert_eq!(
+            marks,
+            vec![Mark::Wsl { distribution: "Ubuntu-24.04".into(), home: "/home/me".into() }]
+        );
     }
 }

@@ -119,6 +119,14 @@ fn main() {
             KeyBinding::new(pick("cmd--", "ctrl--"), DecreaseFontSize, terminal),
             KeyBinding::new(pick("cmd-0", "ctrl-0"), ResetFontSize, terminal),
         ]);
+        // Windows habits: Ctrl+C copies when something is selected (otherwise
+        // it still interrupts the command), Ctrl+V pastes.
+        if cfg!(windows) {
+            cx.bind_keys([
+                KeyBinding::new("ctrl-c", Copy, terminal),
+                KeyBinding::new("ctrl-v", Paste, terminal),
+            ]);
+        }
         cx.set_menus(vec![
             Menu {
                 name: "RTerm".into(),

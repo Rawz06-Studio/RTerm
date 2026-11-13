@@ -87,12 +87,64 @@ impl Completion {
 }
 
 /// What completion needs to know about the pane's shell.
+/// Where a shell's files are, seen from RTerm, when they are elsewhere: a
+/// WSL shell's `/home/me` is `\\wsl$\Ubuntu\home\me` for RTerm on Windows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remote {
+    pub root: PathBuf,
+    /// The shell's home directory, in the shell's terms (`/home/me`).
+    pub home: String,
+}
+
+impl Remote {
+    pub fn wsl(distribution: &str, home: &str) -> Remote {
+        Remote { root: PathBuf::from(format!(r"\\wsl$\{distribution}")), home: home.to_owned() }
+    }
+
+    /// The path RTerm reads for the shell's absolute path `path`.
+    pub fn local(&self, path: &str) -> PathBuf {
+        let mut local = self.root.clone();
+        local.extend(path.split('/').filter(|part| !part.is_empty()));
+        local
+    }
+
+    /// `path` with the shell's home directory shortened to `~`.
+    pub fn display(&self, path: &str) -> String {
+        match path.strip_prefix(self.home.as_str()) {
+            Some("") => "~".to_owned(),
+            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+            _ => path.to_owned(),
+        }
+    }
+}
+
 pub struct ShellState<'a> {
+    /// The shell's current directory, in the shell's terms.
     pub cwd: Option<&'a Path>,
     /// The shell's `PATH` (RTerm's own, failing that).
     pub path: Option<&'a str>,
     /// Aliases, functions and builtins reported by the shell.
     pub commands: Option<&'a HashSet<String>>,
+    /// Set when the shell's files are elsewhere (WSL).
+    pub remote: Option<&'a Remote>,
+}
+
+impl ShellState<'_> {
+    /// The current directory, as a path RTerm can read.
+    pub fn local_cwd(&self) -> Option<PathBuf> {
+        let cwd = self.cwd?;
+        Some(match self.remote {
+            Some(remote) => remote.local(&cwd.to_string_lossy()),
+            None => cwd.to_owned(),
+        })
+    }
+
+    fn home(&self) -> Option<PathBuf> {
+        match self.remote {
+            Some(remote) => Some(remote.local(&remote.home)),
+            None => dirs::home_dir(),
+        }
+    }
 }
 
 /// The completion engine, shared by every pane.
@@ -139,7 +191,7 @@ impl Engine {
         let arguments: Vec<&str> = words.collect();
 
         let mut candidates = match command {
-            None if word.contains('/') => paths(word, shell.cwd, line.quoted, false),
+            None if word.contains('/') => paths(word, shell, line.quoted, false),
             None => self.commands(word, shell),
             Some(command) => self.arguments(command, &arguments, word, &line, shell),
         };
@@ -148,11 +200,14 @@ impl Engine {
     }
 
     /// Updates the sorted list of `PATH` executables, if the `PATH` changed.
-    fn refresh_executables(&self, path: Option<&str>) {
+    fn refresh_executables(&self, path: Option<&str>, remote: Option<&Remote>) {
         let path = path.map(str::to_owned).or_else(|| std::env::var("PATH").ok()).unwrap_or_default();
         let mut cache = self.executables.borrow_mut();
         if cache.0 != path {
-            let mut names = list_executables(&path);
+            let mut names = match remote {
+                Some(remote) => list_remote_executables(&path, remote),
+                None => list_executables(&path),
+            };
             names.sort_unstable();
             names.dedup();
             *cache = (path, names);
@@ -162,8 +217,9 @@ impl Engine {
     /// Tells whether `name` is a command: `Some(false)` only when the shell has
     /// given the list of its aliases and functions, otherwise we cannot tell.
     pub fn is_command(&self, name: &str, shell: &ShellState) -> Option<bool> {
-        if name.contains('/') {
-            return Some(resolve_path(name, shell.cwd).is_some_and(|path| path.exists()));
+        // A path: `./run.sh`, `bin/tool` (and `.\run.ps1` on Windows).
+        if name.contains('/') || (cfg!(windows) && name.contains('\\')) {
+            return Some(resolve_path(name, shell).is_some_and(|path| path.exists()));
         }
         if BUILTINS.contains(&name) || shell.commands.is_some_and(|commands| commands.contains(name)) {
             return Some(true);
@@ -173,10 +229,17 @@ impl Engine {
         if shell.path == Some("") {
             return None;
         }
-        self.refresh_executables(shell.path);
-        if self.executables.borrow().1.binary_search_by(|known| known.as_str().cmp(name)).is_ok() {
+        self.refresh_executables(shell.path, shell.remote);
+        let executables = self.executables.borrow();
+        if executables.1.binary_search_by(|known| known.as_str().cmp(name)).is_ok() {
             return Some(true);
         }
+        // Nothing could be read from the PATH (an unreachable WSL, for
+        // instance): RTerm cannot tell.
+        if executables.1.is_empty() {
+            return None;
+        }
+        drop(executables);
         // PowerShell loads a module's `Verb-Noun` cmdlets on first use: the
         // shell cannot list them all up front.
         if is_verb_noun(name) {
@@ -186,7 +249,7 @@ impl Engine {
     }
 
     fn commands(&self, prefix: &str, shell: &ShellState) -> Vec<Candidate> {
-        self.refresh_executables(shell.path);
+        self.refresh_executables(shell.path, shell.remote);
         let cache = self.executables.borrow();
         let from_shell = shell.commands.into_iter().flatten().map(String::as_str);
 
@@ -253,10 +316,10 @@ impl Engine {
 
         if command == "git"
             && subcommand.is_some_and(|subcommand| GIT_BRANCH_COMMANDS.contains(&subcommand))
-            && let Some(cwd) = shell.cwd
+            && let Some(cwd) = shell.local_cwd()
         {
             candidates.extend(
-                git_branches(cwd)
+                git_branches(&cwd)
                     .iter()
                     .filter(|branch| branch.starts_with(word))
                     .map(|branch| Candidate::word(branch, "branch")),
@@ -264,7 +327,7 @@ impl Engine {
         }
 
         let directories_only = DIRECTORY_COMMANDS.contains(&command);
-        candidates.extend(paths(word, shell.cwd, line.quoted, directories_only));
+        candidates.extend(paths(word, shell, line.quoted, directories_only));
         candidates
     }
 }
@@ -344,9 +407,24 @@ fn is_assignment(word: &str) -> bool {
 
 /// Names of the files found in the `PATH` directories.
 fn list_executables(path: &str) -> Vec<String> {
-    let mut names = Vec::new();
     // ':' separates the directories on Unix, ';' on Windows.
-    for directory in std::env::split_paths(path).filter(|directory| !directory.as_os_str().is_empty()) {
+    list_directories(std::env::split_paths(path).filter(|directory| !directory.as_os_str().is_empty()))
+}
+
+/// Names in a remote shell's `PATH` (WSL: Linux paths, separated by ':').
+/// The Windows folders WSL adds (`/mnt/c/…`) are left out: reading them
+/// through WSL is slow, and they are Windows programs.
+fn list_remote_executables(path: &str, remote: &Remote) -> Vec<String> {
+    list_directories(
+        path.split(':')
+            .filter(|directory| directory.starts_with('/') && !directory.starts_with("/mnt/"))
+            .map(|directory| remote.local(directory)),
+    )
+}
+
+fn list_directories(directories: impl Iterator<Item = PathBuf>) -> Vec<String> {
+    let mut names = Vec::new();
+    for directory in directories {
         let Ok(entries) = std::fs::read_dir(directory) else {
             continue;
         };
@@ -381,13 +459,13 @@ fn is_verb_noun(name: &str) -> bool {
 const WINDOWS_PROGRAMS: &[&str] = &["exe", "cmd", "bat", "com", "ps1"];
 
 /// Files and directories whose name extends `word`.
-fn paths(word: &str, cwd: Option<&Path>, quoted: bool, directories_only: bool) -> Vec<Candidate> {
+fn paths(word: &str, shell: &ShellState, quoted: bool, directories_only: bool) -> Vec<Candidate> {
     // "src/ma": we list `src`, looking for names starting with "ma".
     let (typed_directory, prefix) = match word.rfind('/') {
         Some(index) => word.split_at(index + 1),
         None => ("", word),
     };
-    let Some(directory) = resolve_directory(typed_directory, cwd) else {
+    let Some(directory) = resolve_directory(typed_directory, shell) else {
         return Vec::new();
     };
     let Ok(entries) = std::fs::read_dir(&directory) else {
@@ -440,26 +518,28 @@ fn paths(word: &str, cwd: Option<&Path>, quoted: bool, directories_only: bool) -
 }
 
 /// The full path of a file as typed (`~`, relative or absolute).
-pub fn resolve_path(typed: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+/// The path RTerm reads for what the user typed (`~/x`, `/etc`, `src/x`).
+pub fn resolve_path(typed: &str, shell: &ShellState) -> Option<PathBuf> {
     if typed == "~" {
-        return dirs::home_dir();
+        return shell.home();
     }
     if let Some(rest) = typed.strip_prefix("~/") {
-        return Some(dirs::home_dir()?.join(rest));
+        return Some(shell.home()?.join(rest));
+    }
+    if let Some(remote) = shell.remote
+        && typed.starts_with('/')
+    {
+        return Some(remote.local(typed));
     }
     let typed = Path::new(typed);
-    if typed.is_absolute() { Some(typed.to_owned()) } else { Some(cwd?.join(typed)) }
+    if typed.is_absolute() { Some(typed.to_owned()) } else { Some(shell.local_cwd()?.join(typed)) }
 }
 
-fn resolve_directory(typed: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+fn resolve_directory(typed: &str, shell: &ShellState) -> Option<PathBuf> {
     if typed == "~/" {
-        return dirs::home_dir();
+        return shell.home();
     }
-    if let Some(rest) = typed.strip_prefix("~/") {
-        return Some(dirs::home_dir()?.join(rest));
-    }
-    let typed = Path::new(typed);
-    if typed.is_absolute() { Some(typed.to_owned()) } else { Some(cwd?.join(typed)) }
+    resolve_path(typed, shell)
 }
 
 /// Backslash-escapes the characters the shell would interpret.
@@ -540,11 +620,54 @@ mod tests {
     }
 
     fn inserts(engine: &Engine, text: &str, cwd: &Path, path: &str) -> Vec<String> {
-        let shell = ShellState { cwd: Some(cwd), path: Some(path), commands: None };
+        let shell = ShellState { cwd: Some(cwd), path: Some(path), commands: None, remote: None };
         engine
             .complete(text, text.len(), &shell)
             .map(|completion| completion.candidates.into_iter().map(|candidate| candidate.insert).collect())
             .unwrap_or_default()
+    }
+
+    /// A shell in WSL: RTerm reads its files under a root (`\\wsl$\…`),
+    /// here a temporary folder holding a small Linux tree.
+    #[test]
+    fn a_wsl_shell_is_read_through_its_root() {
+        let root = std::env::temp_dir().join(format!("rterm-completion-wsl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for directory in ["home/me/scripts", "usr/bin", "mnt/c/Windows"] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        for file in ["home/me/scripts/run.sh", "home/me/notes.txt", "usr/bin/tool", "mnt/c/Windows/notepad.exe"] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+        let remote = Remote { root: root.clone(), home: "/home/me".into() };
+        let engine = engine();
+        let commands: HashSet<String> = ["cd".to_owned()].into();
+        let cwd = Path::new("/home/me/scripts");
+        let shell = ShellState {
+            cwd: Some(cwd),
+            path: Some("/usr/bin:/mnt/c/Windows"),
+            commands: Some(&commands),
+            remote: Some(&remote),
+        };
+        let inserts = |text: &str| -> Vec<String> {
+            engine
+                .complete(text, text.len(), &shell)
+                .map(|completion| completion.candidates.into_iter().map(|candidate| candidate.insert).collect())
+                .unwrap_or_default()
+        };
+
+        // `./script`: highlighted as a command, completed with Tab.
+        assert_eq!(engine.is_command("./run.sh", &shell), Some(true));
+        assert_eq!(engine.is_command("./missing.sh", &shell), Some(false));
+        assert_eq!(inserts("./r"), vec!["./run.sh"]);
+        assert_eq!(inserts("cat ~/no"), vec!["~/notes.txt"]);
+        assert_eq!(inserts("cat /home/me/no"), vec!["/home/me/notes.txt"]);
+        // The Linux PATH, without the Windows folders WSL adds.
+        assert_eq!(engine.is_command("tool", &shell), Some(true));
+        assert_eq!(engine.is_command("notepad.exe", &shell), Some(false));
+        assert_eq!(remote.display("/home/me/scripts"), "~/scripts");
+        assert_eq!(remote.display("/home/meow"), "/home/meow");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -565,9 +688,12 @@ mod tests {
     fn a_foreign_path_never_flags_commands() {
         let engine = engine();
         let commands: HashSet<String> = ["ll".to_owned()].into();
-        let shell = |path| ShellState { cwd: None, path, commands: Some(&commands) };
-        // Known PATH: a missing command is flagged.
-        assert_eq!(engine.is_command("nosuchrtermcommand", &shell(Some("/nonexistent"))), Some(false));
+        let shell = |path| ShellState { cwd: None, path, commands: Some(&commands), remote: None };
+        // A readable PATH: a missing command is flagged.
+        let bin = workspace("foreign").join("bin").to_string_lossy().into_owned();
+        assert_eq!(engine.is_command("nosuchrtermcommand", &shell(Some(&bin))), Some(false));
+        // A PATH where nothing can be read: RTerm cannot tell.
+        assert_eq!(engine.is_command("nosuchrtermcommand", &shell(Some("/nonexistent"))), None);
         // Empty PATH (WSL): RTerm cannot tell.
         assert_eq!(engine.is_command("nosuchrtermcommand", &shell(Some(""))), None);
         assert_eq!(engine.is_command("ll", &shell(Some(""))), Some(true));
@@ -596,7 +722,7 @@ mod tests {
         assert_eq!(inserts(&engine, "git commit --am", &root, ""), vec!["--amend"]);
         assert_eq!(inserts(&engine, "cargo build --rel", &root, ""), vec!["--release"]);
 
-        let shell = ShellState { cwd: Some(&root), path: Some(""), commands: None };
+        let shell = ShellState { cwd: Some(&root), path: Some(""), commands: None, remote: None };
         let completion = engine.complete("git comm", 8, &shell).unwrap();
         assert_eq!(completion.range, 4..8);
         assert_eq!(completion.candidates[0].detail, "Record the staged changes");
@@ -621,7 +747,7 @@ mod tests {
     fn common_prefix_extends_what_was_typed() {
         let root = workspace("prefix");
         let engine = engine();
-        let shell = ShellState { cwd: Some(&root), path: Some(""), commands: None };
+        let shell = ShellState { cwd: Some(&root), path: Some(""), commands: None, remote: None };
         let completion = engine.complete("cat src/m", 9, &shell).unwrap();
         assert_eq!(completion.common_prefix(), Some("src/ma"));
         let completion = engine.complete("cat src/ma", 10, &shell).unwrap();

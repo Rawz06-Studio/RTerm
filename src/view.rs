@@ -28,7 +28,7 @@ use crate::block::{Block, LiveBlock, RowCol};
 use crate::config::Config;
 use crate::editor::Editor;
 use crate::git;
-use crate::completion::{Candidate, Completion, Engine, ShellState, resolve_path};
+use crate::completion::{Candidate, Completion, Engine, Remote, ShellState, resolve_path};
 use crate::highlight::{self, Style};
 use crate::history::{HistoryCursor, HistoryStore, Meta};
 use crate::keys;
@@ -265,7 +265,7 @@ impl TerminalView {
             return live.command.lines().next().unwrap_or_default().to_owned();
         }
         match &session.cwd {
-            Some(cwd) => display_path(cwd),
+            Some(cwd) => shell_path(cwd, session.remote.as_ref()),
             None => self.title.to_string(),
         }
     }
@@ -577,14 +577,15 @@ impl TerminalView {
 
     /// Candidates for the word under the cursor.
     fn shell_completion(&self) -> Option<Completion> {
-        let (cwd, path, commands) = {
+        let (cwd, path, commands, remote) = {
             let session = self.terminal.session.lock();
-            (session.cwd.clone(), session.path.clone(), session.shell_commands.clone())
+            (session.cwd.clone(), session.path.clone(), session.shell_commands.clone(), session.remote.clone())
         };
         let shell = ShellState {
             cwd: cwd.as_deref(),
             path: path.as_deref(),
             commands: commands.as_deref(),
+            remote: remote.as_ref(),
         };
         self.completion.complete(self.editor.text(), self.editor.cursor(), &shell)
     }
@@ -772,9 +773,27 @@ impl TerminalView {
         session.live.as_ref().filter(|live| live.id == block).map(|live| live.text(range))
     }
 
+    /// Copies the selection. Without one, the key goes on to the shell: on
+    /// Windows, Ctrl+C copies or interrupts, depending on the selection.
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = self.selected_text().filter(|text| !text.is_empty()) {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        match self.selected_text().filter(|text| !text.is_empty()) {
+            Some(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
+            None => cx.propagate(),
+        }
+    }
+
+    /// Windows: a right click copies the selection, or pastes without one,
+    /// like Windows Terminal.
+    fn on_right_click(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match self.selected_text().filter(|text| !text.is_empty()) {
+            Some(text) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                self.block_selection = None;
+                self.selected_block = None;
+                self.terminal.session.lock().active_term_mut().selection = None;
+                cx.notify();
+            }
+            None => self.paste(&Paste, window, cx),
         }
     }
 
@@ -1263,7 +1282,7 @@ impl TerminalView {
             if measure.command_rows > 0 {
                 layer.labels.push(Label {
                     origin: point(origin_x, y),
-                    text: source.meta(blocks_config.show_duration),
+                    text: source.meta(blocks_config.show_duration, session.remote.as_ref()),
                     color: if failed { hsla(red) } else { muted },
                     bold: false,
                     underline: false,
@@ -1347,11 +1366,16 @@ impl TerminalView {
         // Info line: current directory and git branch.
         let mut y = editor_top + EDITOR_PADDING;
         let cwd = session.cwd.clone();
+        let remote = session.remote.clone();
         if self.git_branch.0 != cwd || self.git_branch.1 != frozen_count {
-            let branch = cwd.as_deref().and_then(git::current_branch);
+            let local = cwd.as_deref().map(|cwd| match &remote {
+                Some(remote) => remote.local(&cwd.to_string_lossy()),
+                None => cwd.to_owned(),
+            });
+            let branch = local.as_deref().and_then(git::current_branch);
             self.git_branch = (cwd.clone(), frozen_count, branch);
         }
-        let cwd_text = cwd.as_deref().map(display_path).unwrap_or_default();
+        let cwd_text = cwd.as_deref().map(|cwd| shell_path(cwd, remote.as_ref())).unwrap_or_default();
         let blue = palette.indexed(NamedColor::Blue as usize, &no_overrides);
         let magenta = palette.indexed(NamedColor::Magenta as usize, &no_overrides);
         if let Some(branch) = &self.git_branch.2 {
@@ -1400,10 +1424,11 @@ impl TerminalView {
                 cwd: cwd.as_deref(),
                 path: session.path.as_deref(),
                 commands: known.as_deref(),
+                remote: remote.as_ref(),
             };
             let lookup = highlight::Lookup {
                 is_command: &|word| self.completion.is_command(word, &shell),
-                path_exists: &|path| resolve_path(path, shell.cwd).is_some_and(|path| path.exists()),
+                path_exists: &|path| resolve_path(path, &shell).is_some_and(|path| path.exists()),
             };
             let styles = highlight::highlight(self.editor.text(), &lookup);
             self.highlighted = (self.editor.text().to_owned(), cwd.clone(), known_count, styles);
@@ -1673,7 +1698,7 @@ impl Source<'_> {
 
     /// The header's info line: directory, duration (if `show_duration`),
     /// exit code.
-    fn meta(&self, show_duration: bool) -> String {
+    fn meta(&self, show_duration: bool, remote: Option<&Remote>) -> String {
         let (cwd, status) = match self {
             Source::Frozen(block) => {
                 let mut status =
@@ -1690,7 +1715,7 @@ impl Source<'_> {
                 (&live.cwd, if live.executing { "running…".to_owned() } else { String::new() })
             }
         };
-        let cwd = cwd.as_deref().map(display_path).unwrap_or_default();
+        let cwd = cwd.as_deref().map(|cwd| shell_path(cwd, remote)).unwrap_or_default();
         match (cwd.is_empty(), status.is_empty()) {
             (false, false) => format!("{cwd}  ·  {status}"),
             (false, true) => cwd,
@@ -1733,6 +1758,15 @@ fn command_rows(command: &str, columns: usize) -> Vec<String> {
 
 fn is_single_width(text: &str) -> bool {
     text.chars().all(|ch| ch.width() == Some(1))
+}
+
+/// A directory of the shell, with its home shortened to `~` (the Linux home
+/// for a WSL shell).
+fn shell_path(path: &Path, remote: Option<&Remote>) -> String {
+    match remote {
+        Some(remote) => remote.display(&path.to_string_lossy()),
+        None => display_path(path),
+    }
 }
 
 /// A path with the home directory shortened to `~`.
@@ -1797,6 +1831,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .when(cfg!(windows), |pane| pane.on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click)))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
