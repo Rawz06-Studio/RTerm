@@ -69,8 +69,8 @@ functions of your own shell.
 
 - Tabs at the top or in a column on the left, your choice.
 - Split any pane to the right or downwards.
-- `Cmd+Shift+P` opens the command palette: every action, every theme and your
-  workflows, searchable.
+- `Cmd+Shift+P` opens the command palette: every action, every theme, your
+  workflows and your scripts, searchable.
 
 ### Workflows
 
@@ -87,6 +87,21 @@ arguments = { port = 3000 }
 
 Pick one from the palette and it lands in the editor with its first parameter
 selected; `Tab` jumps to the next one.
+
+### Scripts
+
+Scripts you would otherwise double-click: drop them in
+`~/.config/rterm/scripts/` and run them from **Run Script…**
+(`Cmd+Shift+R`, `Ctrl+Shift+R` on Linux and Windows) or from the palette.
+RTerm types the command into the active tab, or opens a new tab if a command
+is already running there, so the output lands in a block like any other.
+
+- The interpreter comes from the `#!` line, or else from the extension
+  (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.rb`…). The file does not need to be
+  executable.
+- The first comment of the file is its description in the list.
+- On Windows, PowerShell tabs list `.ps1`, `.bat` and `.cmd` scripts; WSL tabs
+  list the others and run them from `/mnt/c/…`.
 
 ### Themes
 
@@ -192,6 +207,7 @@ On Linux and Windows, plain `Ctrl` shortcuts belong to the shell (`Ctrl+C`,
 | Action | macOS | Linux and Windows |
 | --- | --- | --- |
 | Command palette | `Cmd+Shift+P` or `Cmd+P` | `Ctrl+Shift+P` |
+| Run a script | `Cmd+Shift+R` | `Ctrl+Shift+R` |
 | New window | `Cmd+N` | `Ctrl+Shift+N` |
 | New tab | `Cmd+T` | `Ctrl+Shift+T` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | same, or `Ctrl+PgDn` / `Ctrl+PgUp` |
@@ -199,7 +215,7 @@ On Linux and Windows, plain `Ctrl` shortcuts belong to the shell (`Ctrl+C`,
 | Split right / down | `Cmd+D` / `Cmd+Shift+D` | `Ctrl+Shift+D` / `Ctrl+Shift+E` |
 | Next / previous pane | `Cmd+Option+→` / `Cmd+Option+←` | `Ctrl+Alt+→` / `Ctrl+Alt+←` |
 | Close pane | `Cmd+W` | `Ctrl+Shift+W` |
-| Copy / paste | `Cmd+C` / `Cmd+V` | `Ctrl+Shift+C` / `Ctrl+Shift+V` |
+| Copy / paste | `Cmd+C` / `Cmd+V` | `Ctrl+Shift+C` / `Ctrl+Shift+V` (Windows: also `Ctrl+C` with a selection, `Ctrl+V`, right-click) |
 | Complete | `Tab` | `Tab` |
 | Search history | `Ctrl+R` | `Ctrl+R` |
 | New line in the editor | `Shift+Enter` | `Shift+Enter` |
@@ -225,6 +241,7 @@ Everything lives in `~/.config/rterm/`:
 | `config.toml` | Settings. Created on first launch, fully commented. |
 | `themes/*.toml` | Your own color themes. |
 | `workflows/*.toml` | Your workflows. |
+| `scripts/` | Your scripts. |
 | `completions/*.toml` | Extra completion descriptions. |
 | `history.db` | Local history database (SQLite). |
 

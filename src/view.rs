@@ -178,6 +178,8 @@ pub struct TerminalView {
     git_branch: (Option<PathBuf>, usize, Option<String>),
     /// `RTERM_RUN` commands still to launch (demos and tests).
     script: Vec<String>,
+    /// `RTERM_DEMO` "tab:" step: text typed then Tab, once the shell is ready.
+    demo_tab: Option<String>,
 }
 
 impl TerminalView {
@@ -236,6 +238,7 @@ impl TerminalView {
             marked_text: None,
             git_branch: (None, 0, None),
             script,
+            demo_tab: None,
         }
     }
 
@@ -380,6 +383,34 @@ impl TerminalView {
         }
     }
 
+    /// The shell scripts run in, in this pane.
+    pub fn script_shell(&self) -> crate::scripts::Runner {
+        use crate::scripts::Runner;
+        let session = self.terminal.session.lock();
+        if session.powershell {
+            Runner::PowerShell
+        } else if cfg!(windows) {
+            // On Windows, the Unix shells live in WSL.
+            Runner::Wsl
+        } else {
+            Runner::Unix
+        }
+    }
+
+    /// Runs a command, as if typed and submitted. Returns false when the
+    /// pane is not at its prompt (a command is running).
+    pub fn run_command(&mut self, command: &str, cx: &mut Context<Self>) -> bool {
+        if self.mode() != Mode::Editing {
+            return false;
+        }
+        self.popup = None;
+        self.editor.take();
+        self.editor.insert(command);
+        self.submit(cx);
+        cx.notify();
+        true
+    }
+
     /// Launches the next `RTERM_RUN` command as soon as the shell is ready.
     fn run_script(&mut self, cx: &mut Context<Self>) {
         if !self.script.is_empty()
@@ -388,6 +419,15 @@ impl TerminalView {
         {
             self.editor.insert(&command);
             self.submit(cx);
+        } else if self.script.is_empty()
+            && self.mode() == Mode::Editing
+            && let Some(text) = self.demo_tab.take()
+        {
+            // Through the key handler, as a real Tab press.
+            self.insert_text(&text, cx);
+            if let Ok(tab) = Keystroke::parse("tab") {
+                self.editor_key(&tab, cx);
+            }
         }
     }
 
@@ -482,7 +522,9 @@ impl TerminalView {
             return handled;
         }
         let handled = self.edit_key(keystroke, cx);
-        if handled {
+        // Tab has just built the menu: on an empty word (`ls ` + Tab), the
+        // refresh would close it at once.
+        if handled && keystroke.key != "tab" {
             self.refresh_completion();
         }
         handled
@@ -735,6 +777,8 @@ impl TerminalView {
     pub fn demo(&mut self, step: &str, cx: &mut Context<Self>) {
         if let Some(text) = step.strip_prefix("input:") {
             self.editor.insert(text);
+        } else if let Some(text) = step.strip_prefix("tab:") {
+            self.demo_tab = Some(text.to_owned());
         } else if let Some(text) = step.strip_prefix("complete:") {
             self.editor.insert(text);
             self.complete();

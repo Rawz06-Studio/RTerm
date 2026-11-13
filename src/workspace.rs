@@ -16,6 +16,7 @@ use crate::history::HistoryStore;
 use crate::layout::Node;
 use crate::palette::{Palette, hsla, mix};
 use crate::platform::{self, pick};
+use crate::scripts::{self, Script};
 use crate::settings::{self, Setting, Settings, is_dark, wanted_theme};
 use crate::themes;
 use crate::update::{self, CheckForUpdates, InstallUpdate, RestartToUpdate, Status, Updater};
@@ -44,6 +45,8 @@ actions!(
         OpenSettings,
         UseSystemTheme,
         OpenWorkflows,
+        OpenScripts,
+        RunScript,
         ToggleTabsLayout,
         ActivateTab1,
         ActivateTab2,
@@ -80,6 +83,7 @@ enum Run {
     Action(Box<dyn Action>),
     Theme(String),
     Workflow(Workflow),
+    Script(Script),
 }
 
 struct Command {
@@ -210,7 +214,8 @@ impl Workspace {
         if let Some(demo) = std::env::var("RTERM_DEMO").ok().filter(|_| first_window) {
             cx.defer_in(window, move |this, window, cx| {
                 for step in demo.split(',') {
-                    match step.trim() {
+                    // Trailing spaces count: "complete:ls " completes an empty word.
+                    match step.trim_start() {
                         "new-tab" => this.new_tab(&NewTab, window, cx),
                         "split-right" => this.split(Axis::Horizontal, window, cx),
                         "split-down" => this.split(Axis::Vertical, window, cx),
@@ -225,6 +230,7 @@ impl Workspace {
                             if let Some(name) = other.strip_prefix("theme:") {
                                 this.apply_theme(name, cx);
                             } else if other.starts_with("complete:")
+                                || other.starts_with("tab:")
                                 || other.starts_with("history:")
                                 || other.starts_with("input:") {
                                 if let Some(pane) = this.active_tab().map(|tab| tab.active_pane.clone()) {
@@ -234,6 +240,11 @@ impl Workspace {
                                 let found = workflows::load_all().0.into_iter().find(|w| w.name == name);
                                 if let Some(workflow) = found {
                                     this.insert_workflow(&workflow, cx);
+                                }
+                            } else if let Some(name) = other.strip_prefix("script:") {
+                                let found = scripts::load_all().into_iter().find(|s| s.name == name);
+                                if let Some(script) = found {
+                                    this.run_script(&script, window, cx);
                                 }
                             } else if let Some(query) = other.strip_prefix("type:")
                                 && let Some(palette) = &mut this.palette
@@ -305,8 +316,13 @@ impl Workspace {
     }
 
     fn new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tab(Vec::new(), window, cx);
+    }
+
+    /// Opens a tab after the active one, in its directory, and runs `script`.
+    fn open_tab(&mut self, script: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         let cwd = self.active_cwd(cx);
-        if let Some(pane) = self.open_pane(cwd, Vec::new(), window, cx) {
+        if let Some(pane) = self.open_pane(cwd, script, window, cx) {
             self.tabs.insert(
                 (self.active + 1).min(self.tabs.len()),
                 Tab { root: Node::Pane(pane.clone()), active_pane: pane },
@@ -496,6 +512,43 @@ impl Workspace {
         }
     }
 
+    fn open_scripts(&mut self, _: &OpenScripts, _: &mut Window, cx: &mut Context<Self>) {
+        // Loading creates the directory and its example if they do not exist.
+        scripts::load_all();
+        let Some(directory) = scripts::directory() else {
+            return;
+        };
+        if let Err(error) = platform::open(&directory, false) {
+            self.error = Some(format!("Failed to open {}: {error}", directory.display()).into());
+            cx.notify();
+        }
+    }
+
+    /// The palette, showing the scripts only.
+    fn run_script_action(&mut self, _: &RunScript, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.is_none() {
+            self.toggle_palette(&TogglePalette, window, cx);
+        }
+        if let Some(palette) = &mut self.palette {
+            palette.query = "Script".to_owned();
+            palette.selected = 0;
+        }
+        cx.notify();
+    }
+
+    /// Runs a script in the active pane, or in a new tab when a command is
+    /// already running there.
+    fn run_script(&mut self, script: &Script, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.active_tab().map(|tab| tab.active_pane.clone()) else {
+            return;
+        };
+        let command = script.command(pane.read(cx).script_shell());
+        if pane.update(cx, |pane, cx| pane.run_command(&command, cx)) {
+            return;
+        }
+        self.open_tab(vec![command], window, cx);
+    }
+
     /// Puts a workflow into the active pane's editor.
     fn insert_workflow(&mut self, workflow: &Workflow, cx: &mut Context<Self>) {
         if let Some(pane) = self.active_tab().map(|tab| tab.active_pane.clone()) {
@@ -538,6 +591,7 @@ impl Workspace {
             action("Settings", pick("⌘,", "Ctrl+,"), Box::new(OpenSettings)),
             action("Open Settings File", "", Box::new(OpenConfig)),
             action("Open Workflows Folder", "", Box::new(OpenWorkflows)),
+            action("Open Scripts Folder", "", Box::new(OpenScripts)),
             action("About RTerm", "", Box::new(About)),
             action("New Window", pick("⌘N", "Ctrl+Shift+N"), Box::new(NewWindow)),
             action("Check for Updates", "", Box::new(CheckForUpdates)),
@@ -574,6 +628,19 @@ impl Workspace {
             hint: workflow.description.clone(),
             run: Run::Workflow(workflow),
         }));
+
+        // Only those the active pane's shell can run.
+        let shell = self.active_tab().map(|tab| tab.active_pane.read(cx).script_shell());
+        commands.extend(
+            scripts::load_all()
+                .into_iter()
+                .filter(|script| shell.is_some_and(|shell| script.runs_in(shell)))
+                .map(|script| Command {
+                    label: format!("Script: {}", script.name),
+                    hint: script.description.clone(),
+                    run: Run::Script(script),
+                }),
+        );
         commands
     }
 
@@ -615,6 +682,7 @@ impl Workspace {
             Run::Action(action) => window.dispatch_action(action, cx),
             Run::Theme(name) => self.set_theme(&name, cx),
             Run::Workflow(workflow) => self.insert_workflow(&workflow, cx),
+            Run::Script(script) => self.run_script(&script, window, cx),
         }
     }
 
@@ -811,6 +879,8 @@ impl Workspace {
             Some(("Split Down", "Ctrl+Shift+E", Box::new(SplitDown))),
             None,
             Some(("Command Palette", "Ctrl+Shift+P", Box::new(TogglePalette))),
+            Some(("Run Script…", "Ctrl+Shift+R", Box::new(RunScript))),
+            Some(("Open Scripts Folder", "", Box::new(OpenScripts))),
             Some(("Settings", "Ctrl+,", Box::new(OpenSettings))),
             Some(("About RTerm", "", Box::new(About))),
             None,
@@ -1167,6 +1237,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::open_config))
             .on_action(cx.listener(Self::open_workflows))
+            .on_action(cx.listener(Self::open_scripts))
+            .on_action(cx.listener(Self::run_script_action))
             .on_action(cx.listener(Self::toggle_tabs_layout))
             .on_action(cx.listener(Self::use_system_theme));
         let root = activate_tab!(

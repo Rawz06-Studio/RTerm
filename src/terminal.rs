@@ -123,6 +123,8 @@ pub struct Session {
     pub shell_commands: Option<Arc<HashSet<String>>>,
     /// Where RTerm reads the shell's files, when they are elsewhere (WSL).
     pub remote: Option<Remote>,
+    /// The shell is PowerShell (its commands are written differently).
+    pub powershell: bool,
     /// Finished commands, waiting to be written to the history.
     pub finished: Vec<FinishedCommand>,
     next_id: u64,
@@ -447,6 +449,7 @@ impl Terminal {
             path: None,
             shell_commands: None,
             remote: None,
+            powershell: matches!(kind.as_str(), "pwsh" | "powershell"),
             finished: Vec::new(),
             next_id: 0,
             size,

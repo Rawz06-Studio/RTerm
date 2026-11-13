@@ -22,6 +22,7 @@ mod terminal;
 mod themes;
 mod update;
 mod view;
+mod scripts;
 mod workflows;
 mod workspace;
 
@@ -39,7 +40,8 @@ use crate::view::{
 use crate::workspace::{
     ActivateTab1, ActivateTab2, ActivateTab3, ActivateTab4, ActivateTab5, ActivateTab6,
     ActivateTab7, ActivateTab8, ActivateTab9, ClosePane, FocusNextPane, FocusPreviousPane,
-    About, NewTab, NewWindow, NextTab, OpenConfig, OpenSettings, PreviousTab, Quit, SplitDown, SplitRight,
+    About, NewTab, NewWindow, NextTab, OpenConfig, OpenScripts, OpenSettings, PreviousTab, Quit, RunScript,
+    SplitDown, SplitRight,
     TogglePalette, ToggleTabsLayout, Workspace,
 };
 
@@ -96,6 +98,7 @@ fn main() {
             KeyBinding::new(pick("cmd-alt-left", "ctrl-alt-left"), FocusPreviousPane, workspace),
             KeyBinding::new(pick("cmd-shift-p", "ctrl-shift-p"), TogglePalette, workspace),
             KeyBinding::new(pick("cmd-p", "ctrl-shift-p"), TogglePalette, workspace),
+            KeyBinding::new(pick("cmd-shift-r", "ctrl-shift-r"), RunScript, workspace),
             KeyBinding::new(pick("cmd-,", "ctrl-,"), OpenSettings, None),
             KeyBinding::new(pick("cmd-1", "alt-1"), ActivateTab1, workspace),
             KeyBinding::new(pick("cmd-2", "alt-2"), ActivateTab2, workspace),
@@ -147,6 +150,9 @@ fn main() {
                     MenuItem::action("New Tab", NewTab),
                     MenuItem::action("Split Right", SplitRight),
                     MenuItem::action("Split Down", SplitDown),
+                    MenuItem::separator(),
+                    MenuItem::action("Run Script…", RunScript),
+                    MenuItem::action("Open Scripts Folder", OpenScripts),
                     MenuItem::separator(),
                     MenuItem::action("Close Pane", ClosePane),
                 ],
