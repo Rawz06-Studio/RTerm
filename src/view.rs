@@ -716,14 +716,9 @@ impl TerminalView {
                     let range = completion.range.clone();
                     let candidate = completion.candidates.get(*selected).cloned();
                     self.popup = None;
+                    // A directory stays as it is: Tab again lists its content.
                     if let Some(candidate) = candidate {
                         self.accept(range, &candidate);
-                        // A directory: carry on into its content.
-                        if !candidate.append_space {
-                            self.popup = self
-                                .shell_completion()
-                                .map(|completion| Popup::Completion { completion, selected: 0 });
-                        }
                     }
                 }
                 _ => return None,

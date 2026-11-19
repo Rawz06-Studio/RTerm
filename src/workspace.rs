@@ -17,7 +17,7 @@ use crate::layout::Node;
 use crate::palette::{Palette, hsla, mix};
 use crate::platform::{self, pick};
 use crate::scripts::{self, Script};
-use crate::settings::{self, Setting, Settings, is_dark, wanted_theme};
+use crate::settings::{self, Setting, Settings, ShellChoice, is_dark, wanted_theme};
 use crate::themes;
 use crate::update::{self, CheckForUpdates, InstallUpdate, RestartToUpdate, Status, Updater};
 use crate::view::{
@@ -47,6 +47,8 @@ actions!(
         OpenWorkflows,
         OpenScripts,
         RunScript,
+        NewWslTab,
+        NewPowerShellTab,
         ToggleTabsLayout,
         ActivateTab1,
         ActivateTab2,
@@ -205,7 +207,7 @@ impl Workspace {
             .filter(|_| first_window)
             .map(|script| script.lines().rev().map(str::to_owned).collect())
             .unwrap_or_default();
-        if let Some(pane) = workspace.open_pane(None, script, window, cx) {
+        if let Some(pane) = workspace.open_pane(None, script, None, window, cx) {
             workspace.tabs.push(Tab { root: Node::Pane(pane.clone()), active_pane: pane });
         }
 
@@ -263,15 +265,26 @@ impl Workspace {
 
     /// Launches a shell in a new pane. On failure, the error is displayed
     /// and the workspace is left as it is.
+    /// `shell`: a program to launch instead of the configured one.
     fn open_pane(
         &mut self,
         cwd: Option<std::path::PathBuf>,
         script: Vec<String>,
+        shell: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Pane> {
+        let config = match shell {
+            Some(program) => {
+                let mut config = (*self.config).clone();
+                config.shell.program = program;
+                config.shell.args.clear();
+                Rc::new(config)
+            }
+            None => self.config.clone(),
+        };
         let context = PaneContext {
-            config: self.config.clone(),
+            config,
             palette: self.colors.clone(),
             history: self.history.clone(),
             completion: self.completion.clone(),
@@ -316,13 +329,27 @@ impl Workspace {
     }
 
     fn new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_tab(Vec::new(), window, cx);
+        self.open_tab(Vec::new(), None, window, cx);
+    }
+
+    fn new_wsl_tab(&mut self, _: &NewWslTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tab(Vec::new(), Some(ShellChoice::Wsl.program()), window, cx);
+    }
+
+    fn new_powershell_tab(&mut self, _: &NewPowerShellTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tab(Vec::new(), Some(ShellChoice::PowerShell.program()), window, cx);
     }
 
     /// Opens a tab after the active one, in its directory, and runs `script`.
-    fn open_tab(&mut self, script: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_tab(
+        &mut self,
+        script: Vec<String>,
+        shell: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let cwd = self.active_cwd(cx);
-        if let Some(pane) = self.open_pane(cwd, script, window, cx) {
+        if let Some(pane) = self.open_pane(cwd, script, shell, window, cx) {
             self.tabs.insert(
                 (self.active + 1).min(self.tabs.len()),
                 Tab { root: Node::Pane(pane.clone()), active_pane: pane },
@@ -396,7 +423,7 @@ impl Workspace {
             return;
         };
         let cwd = self.active_cwd(cx);
-        let Some(pane) = self.open_pane(cwd, Vec::new(), window, cx) else {
+        let Some(pane) = self.open_pane(cwd, Vec::new(), None, window, cx) else {
             return;
         };
         let tab = &mut self.tabs[self.active];
@@ -546,7 +573,7 @@ impl Workspace {
         if pane.update(cx, |pane, cx| pane.run_command(&command, cx)) {
             return;
         }
-        self.open_tab(vec![command], window, cx);
+        self.open_tab(vec![command], None, window, cx);
     }
 
     /// Puts a workflow into the active pane's editor.
@@ -597,6 +624,10 @@ impl Workspace {
             action("Check for Updates", "", Box::new(CheckForUpdates)),
             action("Quit RTerm", pick("⌘Q", "Ctrl+Shift+Q"), Box::new(Quit)),
         ];
+        if cfg!(windows) {
+            commands.insert(1, action("New WSL Tab", "", Box::new(NewWslTab)));
+            commands.insert(2, action("New PowerShell Tab", "", Box::new(NewPowerShellTab)));
+        }
         match &self.updater.read(cx).status {
             Status::Available(release) => commands.push(action(
                 &format!("Install Update ({})", release.version),
@@ -872,7 +903,7 @@ impl Workspace {
         let hover_background = hsla(mix(self.colors.foreground(), background, 0.08));
         let border = hsla(mix(self.colors.foreground(), background, 0.16));
         // `None` draws a separator.
-        let items: Vec<Option<MenuItem>> = vec![
+        let mut items: Vec<Option<MenuItem>> = vec![
             Some(("New Tab", "Ctrl+Shift+T", Box::new(NewTab))),
             Some(("New Window", "Ctrl+Shift+N", Box::new(NewWindow))),
             Some(("Split Right", "Ctrl+Shift+D", Box::new(SplitRight))),
@@ -886,6 +917,16 @@ impl Workspace {
             None,
             Some(("Quit RTerm", "Ctrl+Shift+Q", Box::new(Quit))),
         ];
+        // Windows: either shell, whatever the setting.
+        if cfg!(windows) {
+            items.splice(
+                1..1,
+                [
+                    Some(("New WSL Tab", "", Box::new(NewWslTab) as Box<dyn Action>)),
+                    Some(("New PowerShell Tab", "", Box::new(NewPowerShellTab) as Box<dyn Action>)),
+                ],
+            );
+        }
         let rows: Vec<AnyElement> = items
             .into_iter()
             .enumerate()
@@ -1227,6 +1268,8 @@ impl Render for Workspace {
             .text_color(hsla(self.colors.foreground()))
             .key_context("Workspace")
             .on_action(cx.listener(Self::new_tab))
+            .on_action(cx.listener(Self::new_wsl_tab))
+            .on_action(cx.listener(Self::new_powershell_tab))
             .on_action(cx.listener(Self::close_active_pane))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::previous_tab))

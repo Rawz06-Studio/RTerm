@@ -19,7 +19,8 @@ height = 640
 padding = 12
 
 [shell]
-# Leave empty to use your login shell.
+# Leave empty to use your login shell (Windows: WSL when a distribution is
+# installed, otherwise PowerShell).
 program = ""
 args = []
 # Leave empty to start in your home directory.

@@ -503,34 +503,41 @@ fn shell_program(config: &Config) -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_owned())
 }
 
-/// WSL when a Linux distribution is installed, otherwise PowerShell (the
-/// newer `pwsh` if it is installed).
+/// WSL when a Linux distribution is installed, otherwise PowerShell.
 #[cfg(windows)]
 fn windows_default_shell() -> String {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    // Without a console window flashing on the screen.
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let quiet = |program: &str, args: &[&str]| {
-        Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-    };
     // `wsl --list` answers in UTF-16: any letter means a distribution.
-    let has_distribution = quiet("wsl.exe", &["--list", "--quiet"])
+    let has_distribution = run_quietly("wsl.exe", &["--list", "--quiet"])
         .is_some_and(|output| output.stdout.iter().any(|byte| byte.is_ascii_alphanumeric()));
-    if has_distribution {
-        "wsl.exe".to_owned()
-    } else if quiet("pwsh.exe", &["-NoProfile", "-Command", "exit"]).is_some() {
+    if has_distribution { "wsl.exe".to_owned() } else { windows_powershell() }
+}
+
+/// The newer PowerShell (`pwsh`) if it is installed, otherwise the one
+/// that comes with Windows.
+#[cfg(windows)]
+pub fn windows_powershell() -> String {
+    if run_quietly("pwsh.exe", &["-NoProfile", "-Command", "exit"]).is_some() {
         "pwsh.exe".to_owned()
     } else {
         "powershell.exe".to_owned()
     }
+}
+
+/// Runs a program without a console window flashing on the screen; `None`
+/// if it is missing or fails.
+#[cfg(windows)]
+fn run_quietly(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
 }
 
 /// Writes what WSL needs (the start script and the zsh and bash

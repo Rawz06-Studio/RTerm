@@ -173,7 +173,12 @@ your PC: click **More info**, then **Run anyway**.
 RTerm opens your WSL distribution when one is installed (in your Linux home),
 otherwise PowerShell. Blocks and the input editor work with your WSL shell
 (zsh or bash) and with PowerShell (5.1 and 7); `cmd.exe` and other shells run
-as a classic terminal. To pick a shell:
+as a classic terminal.
+
+To change the shell of new tabs, use **Settings → Shell**: Automatic, WSL or
+PowerShell (the newer `pwsh` when it is installed). **New WSL Tab** and **New
+PowerShell Tab**, in the ⋯ menu and the palette, open one tab with the other
+shell without changing the setting. Any other shell goes in `config.toml`:
 
 ```toml
 [shell]

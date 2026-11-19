@@ -30,6 +30,44 @@ pub enum Setting {
     ShowDuration(bool),
     Compact(bool),
     CheckUpdates(bool),
+    /// Windows: the shell of new tabs.
+    Shell(ShellChoice),
+}
+
+/// The shells offered on Windows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ShellChoice {
+    /// WSL when a distribution is installed, otherwise PowerShell.
+    Automatic,
+    Wsl,
+    PowerShell,
+}
+
+impl ShellChoice {
+    /// The choice a `[shell] program` corresponds to, if any.
+    pub fn of(program: &str) -> Option<ShellChoice> {
+        // `C:\…\pwsh.exe`: Windows separators, whatever the system.
+        let file = program.rsplit(['\\', '/']).next().unwrap_or_default();
+        let name = file.split_once('.').map_or(file, |(stem, _)| stem).to_ascii_lowercase();
+        match name.as_str() {
+            "" => Some(ShellChoice::Automatic),
+            "wsl" => Some(ShellChoice::Wsl),
+            "pwsh" | "powershell" => Some(ShellChoice::PowerShell),
+            _ => None,
+        }
+    }
+
+    /// The program written to the config.
+    pub fn program(self) -> String {
+        match self {
+            ShellChoice::Automatic => String::new(),
+            ShellChoice::Wsl => "wsl.exe".to_owned(),
+            #[cfg(windows)]
+            ShellChoice::PowerShell => crate::terminal::windows_powershell(),
+            #[cfg(not(windows))]
+            ShellChoice::PowerShell => "pwsh".to_owned(),
+        }
+    }
 }
 
 /// Which theme choice a setting changes.
@@ -164,6 +202,21 @@ impl Settings {
                 vec![("updates", "check", check.into())],
                 cx,
             ),
+            Setting::Shell(choice) => {
+                let program = choice.program();
+                self.update(
+                    |config| {
+                        config.shell.program = program.clone();
+                        // Arguments were meant for the previous shell.
+                        config.shell.args.clear();
+                    },
+                    vec![
+                        ("shell", "program", program.as_str().into()),
+                        ("shell", "args", toml_edit::Array::new().into()),
+                    ],
+                    cx,
+                );
+            }
         }
     }
 }
@@ -229,7 +282,7 @@ pub fn open_window(cx: &mut App) {
         cx.activate(true);
         return;
     }
-    let handle = open_panel("Settings", size(px(460.), px(452.)), cx, SettingsWindow::new);
+    let handle = open_panel("Settings", size(px(460.), px(if cfg!(windows) { 520. } else { 452. })), cx, SettingsWindow::new);
     cx.global_mut::<GlobalSettings>().window = handle;
 }
 
@@ -389,6 +442,19 @@ impl Render for SettingsWindow {
                     .child(button("font-larger", "+", false, Setting::FontSize(1.0)))
                     .into_any_element(),
             ))
+            .when(cfg!(windows), |panel| {
+                let current = ShellChoice::of(&config.shell.program);
+                let choice = |id, label, choice| button(id, label, current == Some(choice), Setting::Shell(choice));
+                panel.child(section("Shell (new tabs)")).child(row(
+                    "Shell",
+                    segmented(vec![
+                        choice("shell-auto", "Automatic", ShellChoice::Automatic),
+                        choice("shell-wsl", "WSL", ShellChoice::Wsl),
+                        choice("shell-powershell", "PowerShell", ShellChoice::PowerShell),
+                    ])
+                    .into_any_element(),
+                ))
+            })
             .child(section("Blocks"))
             .child(row(
                 "Show command duration",
@@ -438,5 +504,21 @@ impl Render for SettingsWindow {
                             .child("Changes are saved right away"),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ShellChoice;
+
+    #[test]
+    fn shell_choice_is_read_from_the_program() {
+        assert!(ShellChoice::of("") == Some(ShellChoice::Automatic));
+        assert!(ShellChoice::of("wsl.exe") == Some(ShellChoice::Wsl));
+        assert!(ShellChoice::of(r"C:\Program Files\PowerShell\7\pwsh.exe") == Some(ShellChoice::PowerShell));
+        assert!(ShellChoice::of("powershell.exe") == Some(ShellChoice::PowerShell));
+        assert!(ShellChoice::of("cmd.exe").is_none());
+        assert_eq!(ShellChoice::Automatic.program(), "");
+        assert_eq!(ShellChoice::Wsl.program(), "wsl.exe");
     }
 }
