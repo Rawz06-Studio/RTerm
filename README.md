@@ -60,6 +60,8 @@ functions of your own shell.
 
 - `Tab` completes commands, files, git branches, and subcommands and options
   (with descriptions) for `git`, `cargo`, `npm`, `docker` and `brew`.
+- `↑` / `↓` walk your history; with something typed, only the commands that
+  start with it (`cd` then `↑` goes through your `cd` commands).
 - `Ctrl+R` searches your history. Commands run in RTerm remember their
   directory, exit code and duration.
 

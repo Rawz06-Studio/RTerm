@@ -136,40 +136,54 @@ impl HistoryStore {
 /// A pane's position in the history, when walking it with the arrow keys.
 #[derive(Default)]
 pub struct HistoryCursor {
-    index: Option<usize>,
-    /// What was typed before starting to walk up.
+    /// The commands shown while walking up, most recent first.
+    shown: Vec<usize>,
+    /// Their text: a command shows once, however often it was run.
+    seen: HashSet<String>,
+    /// What was typed before starting to walk up: only the commands that
+    /// start with it are shown (`cd` + Up walks through the `cd` commands).
     draft: String,
 }
 
 impl HistoryCursor {
     /// Drops the navigation in progress (the user edited the text).
     pub fn reset(&mut self) {
-        self.index = None;
+        self.shown.clear();
+        self.seen.clear();
     }
 
-    /// Previous command. `current` is the editor's current text.
+    /// Previous matching command. `current` is the editor's current text.
     pub fn previous<'a>(&mut self, store: &'a HistoryStore, current: &str) -> Option<&'a str> {
-        let index = match self.index {
+        let end = match self.shown.last() {
             None => {
                 self.draft = current.to_owned();
-                store.len().checked_sub(1)?
+                self.seen.clear();
+                // What is typed already is on screen.
+                self.seen.insert(current.to_owned());
+                store.len()
             }
-            Some(index) => index.min(store.len()).checked_sub(1)?,
+            Some(&index) => index.min(store.len()),
         };
-        self.index = Some(index);
-        store.get(index)
+        let index = (0..end).rev().find(|&index| {
+            store.get(index).is_some_and(|entry| entry.starts_with(&self.draft) && !self.seen.contains(entry))
+        })?;
+        let entry = store.get(index)?;
+        self.shown.push(index);
+        self.seen.insert(entry.to_owned());
+        Some(entry)
     }
 
-    /// Next command, or the starting draft once back at the bottom.
+    /// The command shown before the current one, or the starting draft once
+    /// back at the bottom.
     pub fn next(&mut self, store: &HistoryStore) -> Option<String> {
-        let index = self.index? + 1;
-        match store.get(index) {
-            Some(entry) => {
-                self.index = Some(index);
-                Some(entry.to_owned())
-            }
+        let current = self.shown.pop()?;
+        if let Some(entry) = store.get(current) {
+            self.seen.remove(entry);
+        }
+        match self.shown.last().and_then(|&index| store.get(index)) {
+            Some(entry) => Some(entry.to_owned()),
             None => {
-                self.index = None;
+                self.reset();
                 Some(std::mem::take(&mut self.draft))
             }
         }
@@ -308,11 +322,28 @@ mod tests {
         store.push("one");
         store.push("two");
         let mut cursor = HistoryCursor::default();
-        assert_eq!(cursor.previous(&store, "draft"), Some("two"));
+        assert_eq!(cursor.previous(&store, ""), Some("two"));
         assert_eq!(cursor.previous(&store, "two"), Some("one"));
         assert_eq!(cursor.previous(&store, "one"), None);
         assert_eq!(cursor.next(&store).as_deref(), Some("two"));
-        assert_eq!(cursor.next(&store).as_deref(), Some("draft"));
+        assert_eq!(cursor.next(&store).as_deref(), Some(""));
+        assert_eq!(cursor.next(&store), None);
+    }
+
+    #[test]
+    fn navigation_keeps_to_what_was_typed() {
+        let mut store = HistoryStore::in_memory();
+        for command in ["cd src", "ls", "cd ..", "git status", "cd src", "cd"] {
+            store.push(command);
+        }
+        let mut cursor = HistoryCursor::default();
+        // "cd" itself is what is already shown: skipped.
+        assert_eq!(cursor.previous(&store, "cd"), Some("cd src"));
+        assert_eq!(cursor.previous(&store, "cd src"), Some("cd .."));
+        // The older "cd src" was shown already: skipped too.
+        assert_eq!(cursor.previous(&store, "cd .."), None);
+        assert_eq!(cursor.next(&store).as_deref(), Some("cd src"));
+        assert_eq!(cursor.next(&store).as_deref(), Some("cd"));
         assert_eq!(cursor.next(&store), None);
     }
 
